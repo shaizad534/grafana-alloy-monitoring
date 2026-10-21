@@ -1,0 +1,40 @@
+---
+alloy_version: "1.19.2"
+alloy_download_base_url: "https://github.com/grafana/alloy/releases/download"
+alloy_package_checksum: ""
+alloy_download_timeout: 600
+alloy_cleanup_download: true
+
+alloy_config_mode: template
+alloy_config_template: config.alloy.j2
+alloy_config_source: ""
+
+alloy_service_state: started
+alloy_service_enabled: true
+
+alloy_http_port: 12345
+alloy_scrape_interval: "60s"
+alloy_scrape_self: true
+alloy_job_name_prefix: ""
+
+alloy_remote_write_name: primary
+alloy_remote_write_url: ""
+alloy_remote_write_username: ""
+alloy_remote_write_password: ""
+
+alloy_exporter_mysql:
+  enabled: false
+alloy_exporter_mssql:
+  enabled: false
+alloy_exporter_oracledb:
+  enabled: false
+alloy_exporter_mongodb:
+  enabled: false
+alloy_exporters_extra: {}
+
+alloy_forward_to: []
+alloy_additional_config: ""
+
+alloy_verify_healthy: false
+alloy_verify_retries: 15
+alloy_verify_delay: 4

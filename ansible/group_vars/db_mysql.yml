@@ -1,0 +1,4 @@
+---
+alloy_exporter_mysql:
+  enabled: true
+  data_source_name: ""

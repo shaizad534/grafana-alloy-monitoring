@@ -1,0 +1,4 @@
+---
+alloy_exporter_mssql:
+  enabled: true
+  connection_string: ""

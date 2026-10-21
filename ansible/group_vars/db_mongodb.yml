@@ -1,0 +1,4 @@
+---
+alloy_exporter_mongodb:
+  enabled: true
+  mongodb_uri: ""

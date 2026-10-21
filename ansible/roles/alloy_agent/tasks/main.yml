@@ -1,0 +1,517 @@
+---
+# =============================================================================
+# Alloy Agent Role - Main Task File
+# Simple: Install Alloy only. No config management.
+# =============================================================================
+
+# =============================================================================
+# 1. PREFLIGHT CHECKS - Validate environment before doing anything
+# =============================================================================
+- name: Preflight checks and platform resolution
+  block:
+    # Check if OS is supported
+    - name: Assert supported OS family
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family in ['Debian', 'RedHat', 'Windows']
+        fail_msg: "Unsupported OS '{{ ansible_os_family }}' on {{ inventory_hostname }}. Supported: Debian, RedHat, Windows."
+        quiet: true
+
+    # Load platform-specific paths (config location, package type, etc.)
+    - name: Load platform defaults
+      ansible.builtin.include_vars:
+        file: "{{ role_path }}/vars/{{ ansible_os_family }}.yml"
+        name: _platform
+
+    # Validate alloy_version format (must be semantic version like 1.19.2)
+    - name: Validate alloy_version format
+      ansible.builtin.assert:
+        that:
+          - alloy_version is match('^[0-9]+\\.[0-9]+\\.[0-9]+$')
+        fail_msg: "Alloy version must be major.minor.patch (e.g. 1.19.2)."
+        quiet: true
+
+    # Load platform defaults
+    - name: Load platform defaults
+      ansible.builtin.include_vars:
+        file: "{{ role_path }}/vars/{{ ansible_os_family }}.yml"
+        name: _platform
+
+    # Resolve package architecture for Linux
+    - name: Resolve package architecture (Linux only)
+      ansible.builtin.set_fact:
+        _alloy_arch: "{{ alloy_arch_map[ansible_architecture] | default(ansible_architecture) }}"
+      when: ansible_os_family != 'Windows'
+
+    # Ensure architecture is supported
+    - name: Assert supported package architecture
+      ansible.builtin.assert:
+        that:
+          - _alloy_arch in ['amd64', 'arm64']
+        fail_msg: "Package architecture '{{ _alloy_arch }}' not supported. Supported: amd64, arm64."
+        when: ansible_os_family != 'Windows'
+
+  always:
+    - name: Ensure ansible_facts are gathered
+      ansible.builtin.setup:
+      run_once: true
+
+# =============================================================================
+# 2. INSTALL ALLOY (LINUX) - Download, install/upgrade package
+# =============================================================================
+- name: Install Grafana Alloy (Linux)
+  block:
+    # Check currently installed version
+    - name: Query installed Alloy version (Debian/Ubuntu)
+      ansible.builtin.command:
+        cmd: "dpkg-query -W -f='${Version}' alloy"
+      register: _alloy_pkg_query
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: ansible_os_family == 'Debian'
+
+    - name: Query installed Alloy version (RedHat/Rocky/Alma)
+      ansible.builtin.command:
+        cmd: "rpm -q --qf '%{VERSION}' alloy"
+      register: _alloy_pkg_query_rh
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when: ansible_os_family == 'RedHat'
+
+    # Determine if we need to install or upgrade
+    - name: Determine whether an install or upgrade is required
+      ansible.builtin.set_fact:
+        _alloy_installed_version: "{{ ((_alloy_pkg_query.stdout | default('')) | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true)) }}"
+        _alloy_needs_install: "{{ _alloy_installed_version != alloy_version }}"
+      when:
+        - ansible_os_family == 'Debian'
+        - _alloy_pkg_query is defined
+
+    - name: Set package path and determine source (local or remote)
+      ansible.builtin.set_fact:
+        _alloy_pkg_path: "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
+        _alloy_download_url: "{{ alloy_download_base_url }}/v{{ alloy_version }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
+        _alloy_use_local: "{{ alloy_package_local_dir | length > 0 }}"
+      when:
+        - ansible_os_family == 'Debian'
+        - _alloy_needs_install | bool
+
+    # Copy package from local directory (for testing) or download from Artifactory
+    - name: Copy Alloy package from local directory
+      ansible.builtin.copy:
+        src: "{{ alloy_package_local_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
+        dest: "{{ _alloy_pkg_path }}"
+      when:
+        - ansible_os_family == 'Debian'
+        - _alloy_needs_install | bool
+        - _alloy_use_local | bool
+        - not ansible_check_mode
+
+    - name: Download Alloy package from Artifactory
+      ansible.builtin.get_url:
+        url: "{{ _alloy_download_url }}"
+        dest: "{{ _alloy_pkg_path }}"
+        checksum: "{{ ('sha256:' ~ alloy_package_checksum) if alloy_package_checksum | length > 0 else omit }}"
+        timeout: "{{ alloy_download_timeout }}"
+        force: false
+      when:
+        - _alloy_needs_install | bool
+        - not _alloy_use_local | bool
+        - not ansible_check_mode
+      register: _download
+
+    # Backup existing config file (Linux) - keep only previous version (1 backup)
+    - name: Check if Alloy config exists (Linux)
+      ansible.builtin.stat:
+        path: "{{ _platform.config_path }}"
+      register: _config_stat_linux
+      when:
+        - ansible_os_family != 'Windows'
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    - name: Backup existing Alloy config (Linux) - name includes current version
+      ansible.builtin.copy:
+        src: "{{ _platform.config_path }}"
+        dest: "{{ _platform.config_path }}.backup-{{ _alloy_installed_version }}"
+        remote_src: true
+      when:
+        - ansible_os_family != 'Windows'
+        - _alloy_needs_install | bool
+        - _config_stat_linux.stat.exists | default(false)
+        - _alloy_installed_version != ""
+        - not ansible_check_mode
+      register: _config_backup_linux
+
+    # Remove old backups, keep only latest 1 (Linux)
+    - name: Remove old config backups, keep only latest 1 (Linux)
+      ansible.builtin.shell: |
+        ls -t {{ _platform.config_path }}.backup-* 2>/dev/null | tail -n +2 | xargs -r rm -f
+      when:
+        - ansible_os_family != 'Windows'
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    # Debug message for check mode
+    - name: Debug check mode skip
+      ansible.builtin.debug:
+        msg: "check mode: package download/install skipped"
+      when:
+        - _alloy_needs_install | bool
+        - ansible_check_mode
+
+    # Install/Upgrade Alloy package (Debian/Ubuntu)
+    - name: Install/Upgrade Alloy package (Debian/Ubuntu)
+      ansible.builtin.apt:
+        deb: "{{ _alloy_pkg_path }}"
+        state: present
+      when:
+        - ansible_os_family == 'Debian'
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+      notify: restart alloy
+
+    # Install/Upgrade Alloy package (RedHat/Rocky/Alma)
+    - name: Install/Upgrade Alloy package (RedHat/Rocky/Alma)
+      ansible.builtin.command:
+        cmd: "{{ _platform.pkg_install_cmd }} {{ _alloy_pkg_path }}"
+      when:
+        - ansible_os_family in ['RedHat', 'Suse']
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+      notify: restart alloy
+
+    # Verify installation
+    - name: Re-query installed Alloy version
+      ansible.builtin.command:
+        cmd: "dpkg-query -W -f='${Version}' alloy"
+      register: _alloy_installed_verify
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - ansible_os_family == 'Debian'
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    - name: Assert expected version installed
+      ansible.builtin.assert:
+        that:
+          - (_alloy_installed_verify.stdout | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true)) == alloy_version
+        fail_msg: >-
+          Installed Alloy version does not match requested version {{ alloy_version }}.
+          Installed: {{ _alloy_installed_verify.stdout | default('none') }}.
+        quiet: true
+      when:
+        - ansible_os_family == 'Debian'
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    # Clean up downloaded package
+    - name: Remove downloaded package
+      ansible.builtin.file:
+        path: "{{ _alloy_pkg_path }}"
+        state: absent
+      when:
+        - alloy_cleanup_download | bool
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+  when: ansible_os_family != 'Windows'
+
+# =============================================================================
+# 2. INSTALL ALLOY (WINDOWS) - Download, extract, run installer
+# =============================================================================
+- name: Install Grafana Alloy (Windows)
+  block:
+    # Check currently installed version via registry
+    - name: Query installed Alloy version from registry
+      ansible.windows.win_shell:
+        cmd: >
+          $key = Get-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Alloy' -ErrorAction SilentlyContinue
+          if ($null -ne $key -and $key.DisplayVersion) { Write-Output $key.DisplayVersion } else { Write-Output '' }
+      register: _alloy_win_query
+      changed_when: false
+      check_mode: false
+
+    - name: Determine whether an install or upgrade is required
+      ansible.builtin.set_fact:
+        _alloy_installed_version: "{{ (_alloy_win_query.stdout | default('')) | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true) }}"
+        _alloy_needs_install: "{{ _alloy_installed_version != alloy_version }}"
+        _alloy_pkg_url: "{{ alloy_download_base_url }}/v{{ alloy_version }}/alloy-installer-windows-amd64.exe.zip"
+        _alloy_pkg_path: "{{ _platform.temp_dir }}\\alloy-{{ alloy_version }}-installer.zip"
+        _alloy_extract_dir: "{{ _platform.temp_dir }}\\alloy-installer-{{ alloy_version }}"
+        _alloy_use_local: "{{ alloy_package_local_dir | length > 0 }}"
+      check_mode: false
+
+    # Copy installer from local directory (for testing)
+    - name: Copy Alloy installer from local directory (Windows)
+      ansible.windows.win_copy:
+        src: "{{ alloy_package_local_dir }}\\alloy-installer-windows-amd64.exe.zip"
+        dest: "{{ _alloy_pkg_path }}"
+      when:
+        - _alloy_needs_install | bool
+        - _alloy_use_local | bool
+        - not ansible_check_mode
+
+    # Download Alloy installer from Artifactory
+    register: _download
+
+    # Backup existing config file (Windows) - keep only previous version (1 backup)
+    - name: Check if Alloy config exists (Windows)
+      ansible.windows.win_stat:
+        path: "{{ _platform.config_path }}"
+      register: _config_stat_windows
+      when:
+        - ansible_os_family == 'Windows'
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    # Backup existing config file (Windows) - keep only previous version (1 backup)
+    - name: Backup existing Alloy config (Windows) - name includes current version
+      ansible.windows.win_copy:
+        src: "{{ _platform.config_path }}"
+        dest: "{{ _platform.config_path }}.backup-{{ _alloy_installed_version }}"
+        remote_src: true
+      when:
+        - ansible_os_family == 'Windows'
+        - _alloy_needs_install | bool
+        - _config_stat_windows.stat.exists | default(false)
+        - _alloy_installed_version != ""
+        - not ansible_check_mode
+      register: _config_backup_windows
+
+    # Remove old backups, keep only latest 1 (Windows)
+    - name: Remove old config backups, keep only latest 1 (Windows)
+      ansible.windows.win_shell: |
+        $configDir = Split-Path -Path '{{ _platform.config_path }}' -Parent
+        $files = Get-ChildItem -Path $configDir -Filter 'config.alloy.backup-*' | Sort-Object LastWriteTime -Descending
+        if ($files.Count -gt 1) {
+          $files[1..($files.Count-1)] | Remove-Item -Force
+        }
+      when:
+        - ansible_os_family == 'Windows'
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    # Verify installer checksum if provided
+    - name: Verify installer checksum (when provided)
+      ansible.windows.win_shell:
+        cmd: >
+          $h = (Get-FileHash -Algorithm SHA256 -Path '{{ _alloy_pkg_path }}').Hash.ToLower()
+          if ($h -eq '{{ alloy_package_checksum | lower }}') { 'HASH_OK' } else { "HASH_MISMATCH:$h" }
+      register: _hash
+      failed_when: "'HASH_OK' not in _hash.stdout"
+      when:
+        - alloy_package_checksum | length > 0
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    # Extract installer zip
+    - name: Extract installer zip
+      ansible.windows.win_unzip:
+        src: "{{ _alloy_pkg_path }}"
+        dest: "{{ _alloy_extract_dir }}"
+      when:
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    # Stop existing Alloy service
+    - name: Stop existing Alloy service (if present)
+      ansible.windows.win_service:
+        name: Alloy
+        state: stopped
+      when:
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    # Remove existing service registration
+    - name: Delete existing Alloy service registration
+      ansible.windows.win_shell:
+        cmd: >
+          $null = & sc.exe delete Alloy
+          Start-Sleep -Seconds 2
+          if (Get-Service -Name 'Alloy' -ErrorAction SilentlyContinue) { 'STILL_PRESENT' } else { 'DELETED' }
+      register: _svc_del
+      failed_when: "'STILL_PRESENT' in _svc_del.stdout"
+      when:
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    # Run Alloy installer silently
+    - name: Run Alloy installer silent
+      ansible.windows.win_command:
+        cmd: >
+          "{{ _alloy_extract_dir }}\\alloy-installer-windows-amd64.exe"
+          /S /FORCEREGISTRY=yes /D={{ _platform.install_dir }}
+      when:
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+      register: _install
+      failed_when: _install.rc not in [0, 3010]
+
+    # Verify installation
+    - name: Re-query installed version after install
+      ansible.windows.win_shell:
+        cmd: >
+          $key = Get-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Alloy' -ErrorAction SilentlyContinue
+          if ($null -ne $key -and $key.DisplayVersion) { Write-Output $key.DisplayVersion } else { Write-Output '' }
+      register: _alloy_post_install
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    - name: Assert installed version matches requested
+      ansible.builtin.assert:
+        that:
+          - (_alloy_post_install.stdout | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true)) == alloy_version
+        fail_msg: >-
+          Installed Alloy version does not match requested version {{ alloy_version }}.
+          Installed: {{ _alloy_post_install.stdout | default('none') }}.
+        quiet: true
+      when:
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    # Ensure Alloy service is running and enabled
+    - name: Ensure Alloy service is running and enabled
+      ansible.windows.win_service:
+        name: Alloy
+        start_mode: automatic
+        state: started
+      when:
+        - not ansible_check_mode
+
+    - name: Debug check mode skip (Windows)
+      ansible.builtin.debug:
+        msg: "check mode: Windows installer steps skipped"
+      when:
+        - _alloy_needs_install | bool
+        - ansible_check_mode
+
+  when: ansible_os_family == 'Windows'
+
+# =============================================================================
+# 3. MANAGE SERVICE - Start/enable/restart Alloy service
+# =============================================================================
+- name: Manage Alloy service
+  block:
+    - name: Ensure Alloy systemd service (Linux)
+      ansible.builtin.systemd:
+        name: "{{ alloy_service_name | default('alloy') }}"
+        state: "{{ alloy_service_state }}"
+        enabled: "{{ alloy_service_enabled }}"
+        daemon_reload: true
+      when:
+        - ansible_os_family != 'Windows'
+        - not ansible_check_mode
+
+    - name: Ensure Alloy Windows service running/enabled
+      ansible.windows.win_service:
+        name: Alloy
+        start_mode: automatic
+        state: "{{ alloy_service_state }}"
+      when:
+        - ansible_os_family == 'Windows'
+        - not ansible_check_mode
+
+    - name: Debug service state (check mode)
+      ansible.builtin.debug:
+        msg: "check mode: service management skipped"
+      when:
+        - ansible_check_mode
+
+# =============================================================================
+# 4. VERIFY DEPLOYMENT - Check Alloy is running and healthy
+# =============================================================================
+- name: Verify deployment - Alloy is running and healthy
+  block:
+    # Wait for Alloy ready endpoint (Linux)
+    - name: Wait for Alloy ready endpoint (Linux)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ alloy_http_port }}/-/ready"
+        status_code: 200
+        return_content: true
+      register: _ready
+      retries: "{{ alloy_verify_retries }}"
+      delay: "{{ alloy_verify_delay }}"
+      timeout: 5
+      when:
+        - ansible_os_family != 'Windows'
+        - not ansible_check_mode
+
+    # Wait for Alloy ready endpoint (Windows)
+    - name: Wait for Alloy ready endpoint (Windows)
+      ansible.windows.win_shell:
+        cmd: >
+          try {
+            $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:{{ alloy_http_port }}/-/ready' -TimeoutSec 5
+            if ($r.StatusCode -eq 200) { 'READY' } else { 'PENDING' }
+          } catch { 'PENDING' }
+      register: _ready_w
+      retries: "{{ alloy_verify_retries }}"
+      delay: "{{ alloy_verify_delay }}"
+      when:
+        - ansible_os_family == 'Windows'
+        - not ansible_check_mode
+
+    # Assert Alloy is ready
+    - name: Assert Alloy is ready
+      ansible.builtin.assert:
+        that:
+          - (_ready.status == 200) or (_ready_w.stdout contains 'READY')
+        fail_msg: >-
+          Alloy did not become ready within the allowed retries. Check service logs.
+        quiet: true
+      when:
+        - not ansible_check_mode
+
+    # Get Alloy version and status for reporting
+    - name: Get Alloy version and status for reporting
+      ansible.builtin.shell: |
+        echo "ALLOY_VERSION=$(curl -s http://127.0.0.1:{{ alloy_http_port }}/-/metrics 2>/dev/null | grep 'alloy_build_info' | head -1 | sed 's/.*version=\"//;s/\".*//')"
+        echo "ALLOY_STATUS=RUNNING"
+      register: _alloy_status
+      changed_when: false
+      when:
+        - ansible_os_family != 'Windows'
+        - not ansible_check_mode
+
+    - name: Get Alloy version and status (Windows)
+      ansible.windows.win_shell: |
+        try {
+          $metrics = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:{{ alloy_http_port }}/-/metrics' -TimeoutSec 5
+          $version = ($metrics.Content -split "`n" | Where-Object { $_ -like '*alloy_build_info*' } | Select-Object -First 1)
+          if ($version) {
+            $version = $version -replace '.*version="', '' -replace '".*', ''
+            Write-Output "ALLOY_VERSION=$version"
+          } else {
+            Write-Output "ALLOY_VERSION=unknown"
+          }
+          Write-Output "ALLOY_STATUS=RUNNING"
+        } catch {
+          Write-Output "ALLOY_VERSION=unknown"
+          Write-Output "ALLOY_STATUS=ERROR"
+        }
+      register: _alloy_status_w
+      changed_when: false
+      when:
+        - ansible_os_family == 'Windows'
+        - not ansible_check_mode
+
+    # Display deployment summary
+    - name: Deployment summary
+      ansible.builtin.debug:
+        msg: >
+          Alloy {{ alloy_version }} deployed on {{ inventory_hostname }}.
+          Service: {{ alloy_service_name | default('alloy') }} ({{ alloy_service_state }}).
+          Version: {{ _alloy_status.stdout_lines[0] | default(_alloy_status_w.stdout_lines[0] | default('unknown')) }}
+          Status: {{ _alloy_status.stdout_lines[1] | default(_alloy_status_w.stdout_lines[1] | default('unknown')) }}
+        when: not ansible_check_mode
+
+  when: not ansible_check_mode

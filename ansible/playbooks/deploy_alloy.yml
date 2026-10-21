@@ -1,0 +1,15 @@
+---
+- name: Deploy Grafana Alloy on Linux database hosts
+  hosts: "{{ target_group_linux | default('linux_hosts') }}"
+  become: true
+  gather_facts: true
+  serial: "{{ deploy_serial | default('100%') }}"
+  roles:
+    - role: alloy_agent
+
+- name: Deploy Grafana Alloy on Windows database hosts
+  hosts: "{{ target_group_windows | default('windows_hosts') }}"
+  gather_facts: true
+  serial: "{{ deploy_serial | default('100%') }}"
+  roles:
+    - role: alloy_agent

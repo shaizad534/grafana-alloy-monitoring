@@ -1,0 +1,130 @@
+// Grafana Alloy configuration for Grafana Cloud (Mimir)
+// Collects: Windows VM metrics, Oracle DB metrics, Microsoft SQL Server metrics
+// Deploy to: Windows VMs (for windows_exporter) and database servers
+
+// -----------------------------------------------------------------------------
+// Global settings
+// -----------------------------------------------------------------------------
+logging {
+  level  = "info"
+  format = "json"
+}
+
+// -----------------------------------------------------------------------------
+// Grafana Cloud remote_write (Mimir)
+// Replace with your actual Grafana Cloud credentials
+// -----------------------------------------------------------------------------
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = "https://prometheus-prod-xx.grafana.net/api/prom/push"
+    basic_auth {
+      username = "123456"        // Your Grafana Cloud user ID
+      password = "glc_eyJvcmciOiI..."  // Your Grafana Cloud API token
+    }
+  }
+  // Queue tuning for high cardinality
+  queue_config {
+    capacity = 10000
+    max_shards = 1000
+    min_shards = 100
+    max_samples_per_send = 5000
+    batch_send_deadline = "5s"
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Windows VM metrics (windows_exporter)
+// Runs on: Windows VMs
+// -----------------------------------------------------------------------------
+prometheus.exporter.windows "windows" {
+  // Default collectors enabled: cpu, memory, disk, net, os, service, system
+  // Disable specific collectors if needed:
+  // disable_collectors = ["smb", "container"]
+}
+
+prometheus.scrape "windows_vm" {
+  targets        = prometheus.exporter.windows.windows.targets
+  forward_to     = [prometheus.remote_write.grafana_cloud.receiver]
+  job_name       = "windows_vm"
+  scrape_interval = "30s"
+  metrics_path   = "/metrics"
+}
+
+// -----------------------------------------------------------------------------
+// Oracle Database exporter
+// Runs on: Server with Oracle client access to target DB
+// Requires: Oracle Instant Client installed on the host
+// -----------------------------------------------------------------------------
+prometheus.exporter.oracledb "oracle" {
+  // Connection string format: oracle://user:pass@host:port/service_name
+  connection_string = "oracle://exporter_user:CHANGE_ME@oracle-db-host:1521/ORCLCDB"
+  
+  // Query timeout in seconds
+  query_timeout = 30
+  
+  // Optional: custom metrics file paths
+  // custom_metrics = ["/etc/alloy/oracle-custom.yml"]
+}
+
+prometheus.scrape "oracle_db" {
+  targets        = prometheus.exporter.oracledb.oracle.targets
+  forward_to     = [prometheus.remote_write.grafana_cloud.receiver]
+  job_name       = "oracle_database"
+  scrape_interval = "60s"
+  // Add static labels for identification
+  // static_labels = { environment = "production", team = "dba" }
+}
+
+// -----------------------------------------------------------------------------
+// Microsoft SQL Server exporter
+// Runs on: Server with network access to SQL Server
+// -----------------------------------------------------------------------------
+prometheus.exporter.mssql "mssql" {
+  // Connection string format for SQL Server
+  // Format: sqlserver://user:pass@host:port?database=master&encrypt=disable
+  connection_string = "sqlserver://exporter_user:CHANGE_ME@mssql-host:1433?encrypt=disable&trust_server_certificate=true"
+  
+  // Query timeout
+  timeout = "30s"
+  
+  // Optional: custom query config for custom metrics
+  // query_config = """
+  #   # Example custom query
+  #   - query_name: "sql_server_buffer_cache"
+  #     query: "SELECT cntr_value FROM sys.dm_os_performance_counters WHERE counter_name = 'Buffer cache hit ratio'"
+  #     metrics:
+  #       - buffer_cache_hit_ratio:
+  #           usage: "GAUGE"
+  #           description: "Buffer cache hit ratio"
+  #           value_type: "float"
+  #           value: "cntr_value"
+  # """
+}
+
+prometheus.scrape "mssql_db" {
+  targets        = prometheus.exporter.mssql.mssql.targets
+  forward_to     = [prometheus.remote_write.grafana_cloud.receiver]
+  job_name       = "mssql_database"
+  scrape_interval = "60s"
+}
+
+// -----------------------------------------------------------------------------
+// Alloy self-monitoring (optional but recommended)
+// -----------------------------------------------------------------------------
+prometheus.scrape "alloy_self" {
+  targets = [{
+    __address__ = "127.0.0.1:12345"
+    __metrics_path__ = "/metrics"
+  }]
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+  job_name = "alloy_self"
+  scrape_interval = "60s"
+}
+
+// -----------------------------------------------------------------------------
+// Resource limits (optional - uncomment to enable)
+// -----------------------------------------------------------------------------
+// resource {
+//   memory_limit = "512Mi"
+//   cpu_limit = "0.5"
+// }

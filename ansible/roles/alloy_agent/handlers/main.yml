@@ -1,0 +1,14 @@
+---
+- name: restart alloy
+  listen: restart alloy
+  ansible.builtin.systemd:
+    name: "{{ ansible_effective_service_name | default('alloy') }}"
+    state: restarted
+  when: ansible_os_family != 'Windows'
+
+- name: restart alloy on windows
+  listen: restart alloy
+  ansible.windows.win_service:
+    name: Alloy
+    state: restarted
+  when: ansible_os_family == 'Windows'
