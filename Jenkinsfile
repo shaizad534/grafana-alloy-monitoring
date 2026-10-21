@@ -35,6 +35,19 @@ pipeline {
             }
         }
 
+        stage('Setup Ansible Collections') {
+            steps {
+                script {
+                    // Install required Ansible collections on control node (Jenkins agent)
+                    sh '''
+                        cd ansible
+                        echo "=== Installing Ansible collections ==="
+                        ansible-galaxy collection install -r requirements.yml
+                    '''
+                }
+            }
+        }
+
         stage('Ansible Lint & Syntax Check') {
             steps {
                 script {
