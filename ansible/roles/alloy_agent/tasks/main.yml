@@ -257,7 +257,15 @@
         - not ansible_check_mode
 
     # Download Alloy installer from Artifactory
-    register: _download
+    - name: Download Alloy installer from Artifactory
+      ansible.windows.win_get_url:
+        url: "{{ alloy_download_base_url }}/v{{ alloy_version }}/alloy-installer-windows-amd64.exe.zip"
+        dest: "{{ _alloy_pkg_path }}"
+      when:
+        - _alloy_needs_install | bool
+        - not _alloy_use_local | bool
+        - not ansible_check_mode
+      register: _download
 
     # Backup existing config file (Windows) - keep only previous version (1 backup)
     - name: Check if Alloy config exists (Windows)
