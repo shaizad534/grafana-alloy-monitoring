@@ -92,7 +92,7 @@
     # Determine if we need to install or upgrade (RedHat/Amazon)
     - name: Determine whether an install or upgrade is required (RedHat/Amazon)
       ansible.builtin.set_fact:
-        _alloy_installed_version: "{{ ((_alloy_pkg_query_rh.stdout | default('')) | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true)) }}"
+        _alloy_installed_version: "{{ (_alloy_pkg_query_rh.stdout | default('') | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('')) }}"
         _alloy_needs_install: "{{ _alloy_installed_version != alloy_version }}"
       when:
         - ansible_os_family in ['RedHat', 'Amazon']
