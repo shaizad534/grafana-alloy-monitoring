@@ -265,10 +265,9 @@
   block:
     # Check currently installed version via registry
     - name: Query installed Alloy version from registry
-      ansible.windows.win_shell:
-        cmd: >
-          $key = Get-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Alloy' -ErrorAction SilentlyContinue
-          if ($null -ne $key -and $key.DisplayVersion) { Write-Output $key.DisplayVersion } else { Write-Output '' }
+      ansible.windows.win_shell: |
+        $key = Get-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Alloy' -ErrorAction SilentlyContinue
+        if ($null -ne $key -and $key.DisplayVersion) { Write-Output $key.DisplayVersion } else { Write-Output '' }
       register: _alloy_win_query
       changed_when: false
       check_mode: false
@@ -286,7 +285,7 @@
     # Copy installer from local directory (for testing)
     - name: Copy Alloy installer from local directory (Windows)
       ansible.windows.win_copy:
-        src: "{{ alloy_package_local_dir }}\\alloy-installer-windows-amd64.exe.zip"
+        src: "{{ alloy_package_local_dir }}/alloy-installer-windows-amd64.exe.zip"
         dest: "{{ _alloy_pkg_path }}"
       when:
         - _alloy_needs_install | bool
@@ -343,10 +342,9 @@
 
     # Verify installer checksum if provided
     - name: Verify installer checksum (when provided)
-      ansible.windows.win_shell:
-        cmd: >
-          $h = (Get-FileHash -Algorithm SHA256 -Path '{{ _alloy_pkg_path }}').Hash.ToLower()
-          if ($h -eq '{{ alloy_package_checksum | lower }}') { 'HASH_OK' } else { "HASH_MISMATCH:$h" }
+      ansible.windows.win_shell: |
+        $h = (Get-FileHash -Algorithm SHA256 -Path '{{ _alloy_pkg_path }}').Hash.ToLower()
+        if ($h -eq '{{ alloy_package_checksum | lower }}') { 'HASH_OK' } else { "HASH_MISMATCH:$h" }
       register: _hash
       failed_when: "'HASH_OK' not in _hash.stdout"
       when:
@@ -374,11 +372,10 @@
 
     # Remove existing service registration
     - name: Delete existing Alloy service registration
-      ansible.windows.win_shell:
-        cmd: >
-          $null = & sc.exe delete Alloy
-          Start-Sleep -Seconds 2
-          if (Get-Service -Name 'Alloy' -ErrorAction SilentlyContinue) { 'STILL_PRESENT' } else { 'DELETED' }
+      ansible.windows.win_shell: |
+        $null = & sc.exe delete Alloy
+        Start-Sleep -Seconds 2
+        if (Get-Service -Name 'Alloy' -ErrorAction SilentlyContinue) { 'STILL_PRESENT' } else { 'DELETED' }
       register: _svc_del
       failed_when: "'STILL_PRESENT' in _svc_del.stdout"
       when:
@@ -387,10 +384,9 @@
 
     # Run Alloy installer silently
     - name: Run Alloy installer silent
-      ansible.windows.win_command:
-        cmd: >
-          "{{ _alloy_extract_dir }}\\alloy-installer-windows-amd64.exe"
-          /S /FORCEREGISTRY=yes /D={{ _platform._ansible_platform_defaults.install_dir }}
+      ansible.windows.win_command: >
+        "{{ _alloy_extract_dir }}\\alloy-installer-windows-amd64.exe"
+        /S /FORCEREGISTRY=yes /D={{ _platform._ansible_platform_defaults.install_dir }}
       when:
         - _alloy_needs_install | bool
         - not ansible_check_mode
@@ -399,10 +395,9 @@
 
     # Verify installation
     - name: Re-query installed version after install
-      ansible.windows.win_shell:
-        cmd: >
-          $key = Get-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Alloy' -ErrorAction SilentlyContinue
-          if ($null -ne $key -and $key.DisplayVersion) { Write-Output $key.DisplayVersion } else { Write-Output '' }
+      ansible.windows.win_shell: |
+        $key = Get-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Alloy' -ErrorAction SilentlyContinue
+        if ($null -ne $key -and $key.DisplayVersion) { Write-Output $key.DisplayVersion } else { Write-Output '' }
       register: _alloy_post_install
       changed_when: false
       failed_when: false
@@ -492,13 +487,13 @@
 
     # Wait for Alloy ready endpoint (Windows)
     - name: Wait for Alloy ready endpoint (Windows)
-      ansible.windows.win_shell:
-        cmd: >
-          try {
-            $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:{{ alloy_http_port }}/-/ready' -TimeoutSec 5
-            if ($r.StatusCode -eq 200) { 'READY' } else { 'PENDING' }
-          } catch { 'PENDING' }
+      ansible.windows.win_shell: |
+        try {
+          $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:{{ alloy_http_port }}/-/ready' -TimeoutSec 5
+          if ($r.StatusCode -eq 200) { 'READY' } else { 'PENDING' }
+        } catch { 'PENDING' }
       register: _ready_w
+      until: "'READY' in _ready_w.stdout"
       retries: "{{ alloy_verify_retries }}"
       delay: "{{ alloy_verify_delay }}"
       when:
