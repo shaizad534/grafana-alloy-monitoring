@@ -354,7 +354,7 @@
       register: _hash
       failed_when: "'HASH_OK' not in _hash.stdout"
       when:
-        - alloy_package_checksum | length > 0
+        - (alloy_package_checksum | default('') | length) > 0
         - _alloy_needs_install | bool
         - not ansible_check_mode
 
