@@ -1,14 +1,14 @@
 ---
 # Alloy version to install (can be overridden via Jenkins: ALLOY_VERSION)
-alloy_version: "{{ alloy_version | default('1.19.2') }}"
+alloy_version: "1.19.2"
 
 # Artifactory base URL for downloading Alloy packages
 # Override via Jenkins or group_vars: alloy_download_base_url: "https://your-artifactory.example.com/artifactory/grafana-alloy"
-alloy_download_base_url: "{{ alloy_download_base_url | default('https://your-artifactory.example.com/artifactory/grafana-alloy') }}"
+alloy_download_base_url: "https://your-artifactory.example.com/artifactory/grafana-alloy"
 
 # Local package directory (for testing without download)
-# Set to a local path like "../packages" to use local .deb/.rpm/.zip files
-alloy_package_local_dir: "{{ alloy_package_local_dir | default('') }}"
+# Set to a local path like "/path/to/packages" to use local .deb/.rpm/.zip files
+alloy_package_local_dir: ""
 
 # Architecture mapping (Ansible architecture -> Alloy package architecture)
 alloy_arch_map:
@@ -18,7 +18,7 @@ alloy_arch_map:
   arm64: arm64
 
 # Optional: SHA256 checksum for package verification (set per version if needed)
-alloy_package_checksum: "{{ alloy_package_checksum | default('') }}"
+alloy_package_checksum: ""
 alloy_download_timeout: 600
 alloy_cleanup_download: true
 
