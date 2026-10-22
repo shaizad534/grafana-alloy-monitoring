@@ -13,8 +13,8 @@
     - name: Assert supported OS family
       ansible.builtin.assert:
         that:
-          - ansible_os_family in ['Debian', 'RedHat', 'Windows']
-        fail_msg: "Unsupported OS '{{ ansible_os_family }}' on {{ inventory_hostname }}. Supported: Debian, RedHat, Windows."
+          - ansible_os_family in ['Debian', 'RedHat', 'Amazon', 'Suse', 'Windows']
+        fail_msg: "Unsupported OS '{{ ansible_os_family }}' on {{ inventory_hostname }}. Supported: Debian, RedHat, Amazon, Suse, Windows."
         quiet: true
 
     # Load platform-specific paths (config location, package type, etc.)

@@ -1,0 +1,8 @@
+---
+_ansible_platform_defaults:
+  pkg_ext: rpm
+  pkg_install_cmd: "zypper install -y"
+  service_name: alloy
+  config_path: /etc/alloy/config.alloy
+  binary_path: /usr/bin/alloy
+  install_dir: /etc/alloy
