@@ -482,7 +482,7 @@
     - name: Ensure Alloy service is running and enabled
       ansible.windows.win_service:
         name: Alloy
-        start_mode: automatic
+        start_mode: auto
         state: started
       when:
         - not ansible_check_mode
@@ -514,7 +514,7 @@
     - name: Ensure Alloy Windows service running/enabled
       ansible.windows.win_service:
         name: Alloy
-        start_mode: automatic
+        start_mode: auto
         state: "{{ alloy_service_state }}"
       when:
         - ansible_os_family == 'Windows'
