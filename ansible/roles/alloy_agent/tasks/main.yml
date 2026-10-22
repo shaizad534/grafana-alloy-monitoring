@@ -272,9 +272,13 @@
       changed_when: false
       check_mode: false
 
-    - name: Determine whether an install or upgrade is required
+    - name: Determine installed Alloy version (Windows)
       ansible.builtin.set_fact:
         _alloy_installed_version: "{{ (_alloy_win_query.stdout | default('')) | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true) }}"
+      check_mode: false
+
+    - name: Determine whether an install or upgrade is required
+      ansible.builtin.set_fact:
         _alloy_needs_install: "{{ _alloy_installed_version != alloy_version }}"
         _alloy_pkg_url: "{{ alloy_download_base_url }}/v{{ alloy_version }}/alloy-installer-windows-amd64.exe.zip"
         _alloy_pkg_path: "{{ _platform._ansible_platform_defaults.temp_dir }}\\alloy-{{ alloy_version }}-installer.zip"
