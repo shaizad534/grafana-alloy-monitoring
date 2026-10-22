@@ -510,17 +510,6 @@
         - ansible_os_family == 'Windows'
         - not ansible_check_mode
 
-    # Assert Alloy is ready
-    - name: Assert Alloy is ready
-      ansible.builtin.assert:
-        that:
-          - (_ready.status == 200) or (_ready_w.stdout contains 'READY')
-        fail_msg: >-
-          Alloy did not become ready within the allowed retries. Check service logs.
-        quiet: true
-      when:
-        - not ansible_check_mode
-
     # Get Alloy version and status for reporting
     - name: Get Alloy version and status for reporting
       ansible.builtin.shell: |
@@ -558,7 +547,7 @@
     - name: Assert Alloy is ready
       ansible.builtin.assert:
         that:
-          - (_ready.status == 200) or (_ready_w.stdout contains 'READY')
+          - (_ready.status | default(0)) == 200 or 'READY' in (_ready_w.stdout | default(''))
         fail_msg: >-
           Alloy did not become ready within the allowed retries. Check service logs.
         quiet: true
