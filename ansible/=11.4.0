@@ -1,0 +1,6 @@
+Starting galaxy collection install process
+Process install dependency map
+Starting collection install process
+Downloading https://galaxy.ansible.com/api/v3/plugin/ansible/content/published/collections/artifacts/amazon-aws-12.0.0.tar.gz to /root/.ansible/tmp/ansible-local-70655sqm3m4o1/tmptke1qqfp/amazon-aws-12.0.0-pqaxcf6v
+Installing 'amazon.aws:12.0.0' to '/root/.ansible/collections/ansible_collections/amazon/aws'
+amazon.aws:12.0.0 was installed successfully
