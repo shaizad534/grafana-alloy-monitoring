@@ -10,6 +10,13 @@ alloy_download_base_url: "{{ alloy_download_base_url | default('https://your-art
 # Set to a local path like "../packages" to use local .deb/.rpm/.zip files
 alloy_package_local_dir: "{{ alloy_package_local_dir | default('') }}"
 
+# Architecture mapping (Ansible architecture -> Alloy package architecture)
+alloy_arch_map:
+  x86_64: amd64
+  amd64: amd64
+  aarch64: arm64
+  arm64: arm64
+
 # Optional: SHA256 checksum for package verification (set per version if needed)
 alloy_package_checksum: "{{ alloy_package_checksum | default('') }}"
 alloy_download_timeout: 600
