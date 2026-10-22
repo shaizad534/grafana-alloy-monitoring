@@ -80,8 +80,8 @@
       check_mode: false
       when: ansible_os_family == 'RedHat'
 
-    # Determine if we need to install or upgrade
-    - name: Determine whether an install or upgrade is required
+    # Determine if we need to install or upgrade (Debian)
+    - name: Determine whether an install or upgrade is required (Debian)
       ansible.builtin.set_fact:
         _alloy_installed_version: "{{ ((_alloy_pkg_query.stdout | default('')) | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true)) }}"
         _alloy_needs_install: "{{ _alloy_installed_version != alloy_version }}"
@@ -89,13 +89,22 @@
         - ansible_os_family == 'Debian'
         - _alloy_pkg_query is defined
 
+    # Determine if we need to install or upgrade (RedHat)
+    - name: Determine whether an install or upgrade is required (RedHat)
+      ansible.builtin.set_fact:
+        _alloy_installed_version: "{{ ((_alloy_pkg_query_rh.stdout | default('')) | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true)) }}"
+        _alloy_needs_install: "{{ _alloy_installed_version != alloy_version }}"
+      when:
+        - ansible_os_family == 'RedHat'
+        - _alloy_pkg_query_rh is defined
+
     - name: Set package path and determine source (local or remote)
       ansible.builtin.set_fact:
         _alloy_pkg_path: "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
         _alloy_download_url: "{{ alloy_download_base_url }}/v{{ alloy_version }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
         _alloy_use_local: "{{ alloy_package_local_dir | length > 0 }}"
       when:
-        - ansible_os_family == 'Debian'
+        - ansible_os_family in ['Debian', 'RedHat']
         - _alloy_needs_install | bool
 
     # Copy package from local directory (for testing) or download from Artifactory
@@ -104,7 +113,7 @@
         src: "{{ alloy_package_local_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
         dest: "{{ _alloy_pkg_path }}"
       when:
-        - ansible_os_family == 'Debian'
+        - ansible_os_family in ['Debian', 'RedHat']
         - _alloy_needs_install | bool
         - _alloy_use_local | bool
         - not ansible_check_mode
@@ -117,6 +126,7 @@
         timeout: "{{ alloy_download_timeout }}"
         force: false
       when:
+        - ansible_os_family in ['Debian', 'RedHat']
         - _alloy_needs_install | bool
         - not _alloy_use_local | bool
         - not ansible_check_mode
