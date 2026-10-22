@@ -49,7 +49,7 @@
         that:
           - _alloy_arch in ['amd64', 'arm64']
         fail_msg: "Package architecture '{{ _alloy_arch }}' not supported. Supported: amd64, arm64."
-        when: ansible_os_family != 'Windows'
+      when: ansible_os_family != 'Windows'
 
   always:
     - name: Ensure ansible_facts are gathered
