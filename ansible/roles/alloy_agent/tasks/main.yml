@@ -335,9 +335,11 @@
     - name: Remove old config backups, keep only latest 1 (Windows)
       ansible.windows.win_shell: |
         $configDir = Split-Path -Path '{{ _platform._ansible_platform_defaults.config_path }}' -Parent
-        $files = Get-ChildItem -Path $configDir -Filter 'config.alloy.backup-*' | Sort-Object LastWriteTime -Descending
-        if ($files.Count -gt 1) {
-          $files[1..($files.Count-1)] | Remove-Item -Force
+        if (Test-Path -LiteralPath $configDir) {
+          $files = Get-ChildItem -Path $configDir -Filter 'config.alloy.backup-*' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending
+          if ($files.Count -gt 1) {
+            $files[1..($files.Count-1)] | Remove-Item -Force
+          }
         }
       when:
         - ansible_os_family == 'Windows'
