@@ -368,6 +368,14 @@
         - not ansible_check_mode
 
     # Stop existing Alloy service
+    - name: Check if Alloy service exists
+      ansible.windows.win_service_info:
+        name: Alloy
+      register: _alloy_svc_info
+      when:
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
     - name: Stop existing Alloy service (if present)
       ansible.windows.win_service:
         name: Alloy
@@ -375,12 +383,15 @@
       when:
         - _alloy_needs_install | bool
         - not ansible_check_mode
+        - _alloy_svc_info.exists | default(false)
 
     # Remove existing service registration
     - name: Delete existing Alloy service registration
       ansible.windows.win_shell: |
-        $null = & sc.exe delete Alloy
-        Start-Sleep -Seconds 2
+        if (Get-Service -Name 'Alloy' -ErrorAction SilentlyContinue) {
+          $null = & sc.exe delete Alloy
+          Start-Sleep -Seconds 2
+        }
         if (Get-Service -Name 'Alloy' -ErrorAction SilentlyContinue) { 'STILL_PRESENT' } else { 'DELETED' }
       register: _svc_del
       failed_when: "'STILL_PRESENT' in _svc_del.stdout"
