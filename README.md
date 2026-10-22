@@ -417,6 +417,13 @@ ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory/dev/hos
 
 > **Note:** `alloy_package_local_dir` must be an **absolute path** on the Ansible controller. Relative paths are resolved against the role/playbook directories, not your current directory, so `../packages` will fail.
 
+### 4. Run against a single host (Windows example)
+```bash
+ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory/dev/hosts.yml ansible/playbooks/deploy_alloy.yml \
+  -e "alloy_version=1.19.2 alloy_package_local_dir=/root/grafana-alloy-monitoring/packages alloy_download_base_url=dummy" \
+  --limit windows-dev-01
+```
+
 ### How it works
 - If `alloy_package_local_dir` is set and packages exist locally → **uses local packages** (no download)
 - If `alloy_package_local_dir` is empty or packages missing → **downloads from Artifactory**
