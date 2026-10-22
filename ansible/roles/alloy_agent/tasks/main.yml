@@ -319,7 +319,7 @@
 
     # Extract installer zip
     - name: Extract installer zip
-      ansible.windows.win_unzip:
+      community.windows.win_unzip:
         src: "{{ _alloy_pkg_path }}"
         dest: "{{ _alloy_extract_dir }}"
       when:
