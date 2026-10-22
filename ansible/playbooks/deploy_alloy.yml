@@ -9,7 +9,14 @@
 
 - name: Deploy Grafana Alloy on Windows database hosts
   hosts: "{{ target_group_windows | default('windows_hosts') }}"
-  gather_facts: true
+  # gather_facts cannot be used here: the default 'setup' module is Python and
+  # only resolves to ansible.windows.setup with winrm/psrp connections.
+  # Gathering explicitly with the Windows module works over winrm and over
+  # SSH with ansible_shell_type=powershell.
+  gather_facts: false
   serial: "{{ deploy_serial | default('100%') }}"
+  pre_tasks:
+    - name: Gather facts (Windows)
+      ansible.windows.setup:
   roles:
     - role: alloy_agent

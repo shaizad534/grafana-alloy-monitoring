@@ -45,11 +45,6 @@
         fail_msg: "Package architecture '{{ _alloy_arch }}' not supported. Supported: amd64, arm64."
       when: ansible_os_family != 'Windows'
 
-  always:
-    - name: Ensure ansible_facts are gathered
-      ansible.builtin.setup:
-      run_once: true
-
 # =============================================================================
 # 2. INSTALL ALLOY (LINUX) - Download, install/upgrade package
 # =============================================================================
