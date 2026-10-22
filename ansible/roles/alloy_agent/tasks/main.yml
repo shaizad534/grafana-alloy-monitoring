@@ -8,6 +8,7 @@
 # 1. PREFLIGHT CHECKS - Validate environment before doing anything
 # =============================================================================
 - name: Preflight checks and platform resolution
+  tags: [always]
   block:
     # Check if OS is supported
     - name: Assert supported OS family
@@ -49,6 +50,7 @@
 # 2. INSTALL ALLOY (LINUX) - Download, install/upgrade package
 # =============================================================================
 - name: Install Grafana Alloy (Linux)
+  tags: [install]
   block:
     # Check currently installed version
     - name: Query installed Alloy version (Debian/Ubuntu)
@@ -262,6 +264,7 @@
 # 2. INSTALL ALLOY (WINDOWS) - Download, extract, run installer
 # =============================================================================
 - name: Install Grafana Alloy (Windows)
+  tags: [install]
   block:
     # Check currently installed version via registry
     - name: Query installed Alloy version from registry
@@ -500,6 +503,7 @@
 # 3. MANAGE SERVICE - Start/enable/restart Alloy service
 # =============================================================================
 - name: Manage Alloy service
+  tags: [service]
   block:
     - name: Ensure Alloy systemd service (Linux)
       ansible.builtin.systemd:
@@ -530,6 +534,7 @@
 # 4. VERIFY DEPLOYMENT - Check Alloy is running and healthy
 # =============================================================================
 - name: Verify deployment - Alloy is running and healthy
+  tags: [verify]
   block:
     # Wait for Alloy ready endpoint (Linux)
     - name: Wait for Alloy ready endpoint (Linux)

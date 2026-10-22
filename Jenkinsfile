@@ -15,6 +15,7 @@ pipeline {
         string(name: 'HOST_LIMIT', defaultValue: '', description: 'Ansible --limit pattern (e.g. "db_mysql")'),
         string(name: 'DEPLOY_SERIAL', defaultValue: '50%', description: 'Rolling deploy serial percent'),
         booleanParam(name: 'DRY_RUN', defaultValue: false, description: 'Run in check mode (no changes)'),
+        string(name: 'EXTRA_VARS', defaultValue: '', description: 'Additional ansible extra vars (e.g. "alloy_package_local_dir=/tmp/packages")'),
         string(name: 'EMAIL_RECIPIENTS', defaultValue: '', description: 'Comma-separated email addresses for notifications'),
     )
 
@@ -63,7 +64,7 @@ pipeline {
                 sh '''
                     cd ansible
                     echo "=== Running ansible-lint ==="
-                    ansible-lint playbooks/deploy_alloy.yml -r roles/
+                    ansible-lint playbooks/deploy_alloy.yml
                     echo "=== Running ansible-playbook syntax check ==="
                     ansible-playbook --syntax-check -i inventory/${ENVIRONMENT}/hosts.yml playbooks/deploy_alloy.yml \
                         -e "alloy_version=${ALLOY_VERSION} alloy_download_base_url=${ARTIFACTORY_URL} deploy_serial=${DEPLOY_SERIAL}"
@@ -72,26 +73,25 @@ pipeline {
         }
 
         stage('Deploy Alloy') {
-            when { expression { params.DRY_RUN == false } }
             steps {
-                sshagent(['ansible-ssh-key']) {
-                    script {
-                        def limit = params.HOST_LIMIT?.trim() ? "--limit '${params.HOST_LIMIT}'" : ''
-                        def extra = [
-                            "-e alloy_version=${params.ALLOY_VERSION}",
-                            "-e alloy_download_base_url=${params.ARTIFACTORY_URL}",
-                            "-e deploy_serial=${params.DEPLOY_SERIAL}"
-                        ]
-                        if (params.EXTRA_VARS?.trim()) extra << "-e ${params.EXTRA_VARS}"
+                script {
+                    // No sshagent wrapper needed: the inventories use the AWS SSM
+                    // connection plugin, which authenticates with the agent's AWS credentials.
+                    def limit = params.HOST_LIMIT?.trim() ? "--limit '${params.HOST_LIMIT}'" : ''
+                    def extra = [
+                        "-e alloy_version=${params.ALLOY_VERSION}",
+                        "-e alloy_download_base_url=${params.ARTIFACTORY_URL}",
+                        "-e deploy_serial=${params.DEPLOY_SERIAL}"
+                    ]
+                    if (params.EXTRA_VARS?.trim()) extra << "-e '${params.EXTRA_VARS}'"
 
-                        def cmd = "ansible-playbook -i ansible/inventory/${params.ENVIRONMENT}/hosts.yml ansible/playbooks/deploy_alloy.yml "
-                        cmd += extra.join(' ')
-                        if (params.HOST_LIMIT?.trim()) cmd += " ${limit}"
-                        if (params.DRY_RUN) cmd += " --check --diff"
+                    def cmd = "ansible-playbook -i ansible/inventory/${params.ENVIRONMENT}/hosts.yml ansible/playbooks/deploy_alloy.yml "
+                    cmd += extra.join(' ')
+                    if (limit) cmd += " ${limit}"
+                    if (params.DRY_RUN) cmd += " --check --diff"
 
-                        echo "Running: $cmd"
-                        sh cmd
-                    }
+                    echo "Running: $cmd"
+                    sh cmd
                 }
             }
         }
@@ -135,7 +135,7 @@ pipeline {
                     <p><strong>Artifactory URL:</strong> ${params.ARTIFACTORY_URL}</p>
                     <p><strong>Build URL:</strong> ${BUILD_URL}</p>
                     <p><strong>Build Number:</strong> ${BUILD_NUMBER}</p>
-                    <p><strong>Triggered by:</strong> ${BUILD_USER_ID}</p>
+                    <p><strong>Triggered by:</strong> ${env.BUILD_USER_ID ?: 'unknown'}</p>
                     
                     <h3>Console Output (Last 100 lines):</h3>
                     <pre style="background: #f5f5f5; padding: 10px; overflow: auto;">

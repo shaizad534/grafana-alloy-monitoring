@@ -17,23 +17,24 @@ This repository contains a **minimal** Ansible role + Jenkins pipeline that:
 ```
 grafana-alloy-monitoring/
 ├─ ansible/
-│  ├─ ansible.cfg                 # Core Ansible settings
-│  ├─ requirements.yml            # Collections: ansible.windows, community.windows
+│  ├─ ansible.cfg                 # Core Ansible settings (portable roles_path)
+│  ├─ requirements.yml            # Collections: ansible.windows, community.windows, amazon.aws
 │  ├─ inventory/
-│  │  ├─ dev/hosts.yml            # Example inventory – replace IPs with your hosts
-│  │  ├─ staging/hosts.yml        # Copy dev, change IPs
-│  │  └─ prod/hosts.yml           # Copy dev, change IPs
+│  │  ├─ dev/hosts.yml            # AWS SSM inventory (example instances)
+│  │  ├─ staging/hosts.yml        # Staging inventory (placeholders - fill in your instances)
+│  │  └─ prod/hosts.yml           # Production inventory (placeholders - fill in your instances)
 │  ├─ group_vars/
 │  │  └─ all.yml                  # Global defaults (version, service state, etc.)
 │  ├─ playbooks/
-│  │  └─ deploy_alloy.yml         # Main playbook (Linux play; Windows play included in role)
+│  │  └─ deploy_alloy.yml         # Main playbook (Linux play + Windows play)
 │  └─ roles/
 │     └─ alloy_agent/
 │        ├─ defaults/main.yml     # Only a few defaults: version, service state
-│        ├─ vars/                 # Platform‑specific paths (Debian, RedHat, Windows)
+│        ├─ vars/                 # Platform‑specific paths (Debian, RedHat, Amazon, Suse, Windows)
 │        ├─ tasks/main.yml        # **All tasks** – install, service, verify
 │        ├─ handlers/main.yml     # Restart handler
 │        └─ meta/main.yml         # Galaxy metadata
+├─ configs/stage/                 # Reference Alloy config sample (not deployed by the role)
 ├─ packages/                      # Optional: place local .deb/.rpm/.zip packages here for offline testing
 ├─ Jenkinsfile                    # Declarative pipeline (see below)
 └─ README.md                      # This file
@@ -47,8 +48,10 @@ grafana-alloy-monitoring/
 
 | Component | Minimum Version | Recommended | Notes |
 |-----------|----------------|-------------|-------|
-| **Ansible Core** | 2.14+ | 2.15+ / 2.16+ | 2.14+ required for `ansible.builtin` modules; 2.15+ for better Windows support |
-| **Python** | 3.9+ | 3.11+ | Ansible 2.14+ requires Python 3.9+; 3.11+ recommended for performance |
+| **Ansible Core** | 2.16+ | 2.18+ | `ansible.windows >= 3.2.0` requires ansible-core 2.16+ |
+| **Python** | 3.10+ | 3.11+ | ansible-core 2.16 requires Python 3.10+ |
+| **boto3 / botocore** | Latest | Latest | Required by `amazon.aws.aws_ssm` connection (AWS SSM inventories) |
+| **AWS CLI** | v2 | Latest | For the controller's AWS credentials/profile |
 | **pip/pip3** | 21.0+ | Latest | For installing `ansible-lint`, collections |
 | **ansible-lint** | 6.0+ | Latest | Installed via `pip3 install ansible-lint` |
 | **Git** | 2.30+ | Latest | For Jenkins SCM checkout |
@@ -66,7 +69,7 @@ grafana-alloy-monitoring/
 |---|--------|----------------|---------|-----------|
 | 1 | **Pipeline** | 2.5 | Core Pipeline DSL (`pipeline {}`) | ✅ Yes |
 | 2 | **Pipeline: Declarative** | 1.9 | Declarative pipeline syntax | ✅ Yes |
-| 3 | **SSH Agent** | 1.23 | `sshagent(['ansible-ssh-key'])` step | ✅ Yes |
+| 3 | **Email Extension** | 2.96 | `emailext()` notification in `post` block | ✅ Yes |
 | 4 | **Git** | 4.10 | SCM checkout from Git | ✅ Yes |
 | 5 | **Timestamper** | 1.12 | `timestamps()` in options | ✅ Yes |
 | 6 | **Build Timeout** | 1.20 | `timeout()` in options | ✅ Yes |
@@ -76,6 +79,8 @@ grafana-alloy-monitoring/
 #### Optional / Supporting Plugins
 | Plugin | Minimum Version | Purpose | Required? |
 |--------|----------------|---------|-----------|
+| **Build User Vars** | 1.9 | `BUILD_USER_ID` in email notifications | 🔸 Optional |
+| **AWS Credentials** | 1.42 | Bind AWS credentials for SSM (or use an IAM role on the agent) | 🔸 Optional |
 | **Credentials Binding** | 1.27 | Binding credentials as env vars (optional) | 🔸 Optional |
 | **Pipeline: Graph Analysis** | 1.10 | Pipeline graph analysis (used by Stage View) | 🔸 Optional |
 | **Disk Usage** | 1.0 | Monitor workspace disk usage | 🔸 Optional |
@@ -107,8 +112,9 @@ grafana-alloy-monitoring/
 **Windows Requirements:**
 | Method | Requirements |
 |--------|--------------|
-| **WinRM** (default) | WinRM 3.0+, HTTPS listener (port 5986), `AllowUnencrypted=false`, Basic auth or Kerberos |
-| **SSH** (recommended) | OpenSSH Server (Windows 1809+), SSH key auth, `ansible_connection=ssh` |
+| **AWS SSM** (current inventories) | SSM Agent + instance profile, `amazon.aws` collection, `ansible_shell_type: powershell`, S3 transfer bucket |
+| **WinRM** | WinRM 3.0+, HTTPS listener (port 5986), `AllowUnencrypted=false`, Basic auth or Kerberos |
+| **SSH** | OpenSSH Server (Windows 1809+), SSH key auth, `ansible_connection=ssh`, `ansible_shell_type: powershell` |
 
 **Common Windows Requirements:**
 - **PowerShell 5.1+** (built-in on supported versions)
@@ -161,6 +167,46 @@ all:
 
 #### Inventory Configuration Examples
 
+> **This repo's inventories use AWS SSM** (`ansible_connection: amazon.aws.aws_ssm`). SSH and WinRM examples are kept below for reference.
+
+**AWS SSM (current inventories):**
+```yaml
+# inventory/dev/hosts.yml
+all:
+  children:
+    linux_hosts:
+      hosts:
+        ubuntu-linux-dev-01:
+          ansible_host: 40.192.24.0
+          ansible_connection: amazon.aws.aws_ssm
+          ansible_aws_ssm_instance_id: i-078e4fad1d4254259
+          ansible_aws_ssm_region: ap-south-2
+          ansible_aws_ssm_bucket_name: my-ansible-ssm-transfers-unique-name
+
+    windows_hosts:
+      hosts:
+        windows-dev-01:
+          ansible_host: 18.60.146.195
+          ansible_connection: amazon.aws.aws_ssm
+          ansible_aws_ssm_instance_id: i-0e3bc3db5e9b49485
+          ansible_aws_ssm_region: ap-south-2
+          ansible_aws_ssm_bucket_name: my-ansible-ssm-transfers-unique-name
+          ansible_shell_type: powershell
+```
+
+**AWS SSM requirements:**
+| Requirement | Details |
+|-------------|---------|
+| **Controller packages** | `pip3 install boto3 botocore` (or `python3-boto3`), AWS CLI v2 configured with credentials |
+| **Session Manager plugin** | Only needed for manual `aws ssm start-session` troubleshooting. Ansible's `amazon.aws.aws_ssm` plugin talks to the SSM API via boto3, so the plugin binary is **not** required |
+| **Ansible collection** | `amazon.aws >= 8.0.0` (installed from `requirements.yml`) |
+| **Target host** | SSM Agent running + instance profile/role with `AmazonSSMManagedInstanceCore` |
+| **S3 transfer bucket** | `ansible_aws_ssm_bucket_name` must exist in the same region (used for file transfers, e.g. Windows `win_copy`) |
+| **Windows shell** | Set `ansible_shell_type: powershell` for Windows targets |
+| **IAM (controller)** | `ssm:StartSession`, `ssm:SendCommand`, `ssm:GetCommandInvocation`, `s3:PutObject/GetObject` on the transfer bucket |
+
+> `windows_hosts` in `inventory/dev/hosts.yml` is currently commented out. Uncomment it (and replace the instance ID/region) before running against Windows.
+
 **Linux Hosts (SSH Key Auth):**
 ```yaml
 # inventory/prod/hosts.yml
@@ -176,7 +222,7 @@ all:
           ansible_become_method: sudo
 ```
 
-**Windows Hosts (SSH - Recommended):**
+**Windows Hosts (SSH):**
 ```yaml
 # inventory/prod/hosts.yml
   windows_hosts:
@@ -204,20 +250,26 @@ all:
         ansible_port: 5986
 ```
 
-#### Jenkins SSH Key Configuration
+#### Jenkins AWS Credentials (for SSM)
 
-1. **Add SSH Key to Jenkins Credentials:**
-   - Go to **Credentials → System → Global credentials**
-   - **Kind**: SSH Username with private key
-   - **ID**: `ansible-ssh-key`
-   - **Username**: `ubuntu` (or your SSH user)
-   - **Private Key**: Enter directly or from file
+The pipeline no longer uses `sshagent`; the AWS SSM connection plugin authenticates with credentials available to the Jenkins agent.
 
-2. **Reference in Pipeline:**
+1. **Recommended: IAM role on the Jenkins agent**
+   - Attach an IAM role with SSM (`ssm:StartSession`, `ssm:SendCommand`, `ssm:GetCommandInvocation`) and S3 access for the transfer bucket.
+   - No Jenkins credential configuration required.
+
+2. **Alternative: AWS Credentials plugin**
+   - Add an AWS credential (`Kind: AWS Credentials`) and bind it in the pipeline:
    ```groovy
-   sshagent(['ansible-ssh-key']) {
+   withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-ssm-creds']]) {
        sh "ansible-playbook ..."
    }
+   ```
+
+3. **Verify from the agent before running the pipeline:**
+   ```bash
+   aws sts get-caller-identity
+   ansible-inventory -i ansible/inventory/dev/hosts.yml --list
    ```
 
 #### SSH Known Hosts Management
@@ -245,6 +297,9 @@ ansible-playbook -i inventory/prod/hosts.yml playbooks/deploy_alloy.yml \
 # ansible/ansible.cfg
 [defaults]
 inventory = inventory/dev
+# Absolute path used for local testing on the cloud controller:
+# roles_path = /root/grafana-alloy-monitoring/ansible/roles
+# Portable path resolved relative to this file (works on any host/Jenkins agent)
 roles_path = roles
 host_key_checking = False      # Set to True for production
 retry_files_enabled = False
@@ -257,6 +312,12 @@ timeout = 60
 [ssh_connection]
 pipelining = True
 ```
+
+> **Important:** when running from the project root, point Ansible at the config file, otherwise `ansible/ansible.cfg` is not loaded and the role cannot be found:
+> ```bash
+> ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook ...
+> ```
+> In Jenkins this is set automatically via `ANSIBLE_CONFIG=${WORKSPACE}/ansible/ansible.cfg`.
 
 ---
 
@@ -335,7 +396,7 @@ pip3 install ansible-lint
 
 # Run lint on the playbook
 cd grafana-alloy-monitoring/ansible
-ansible-lint playbooks/deploy_alloy.yml -r roles/
+ansible-lint playbooks/deploy_alloy.yml
 
 # Syntax check (dry-run, no changes)
 ansible-playbook --syntax-check -i inventory/dev/hosts.yml playbooks/deploy_alloy.yml \
@@ -374,7 +435,7 @@ ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory/dev/hos
 | `HOST_LIMIT` | String | *(empty)* | Ansible `--limit` pattern (e.g. `db_mysql`). |
 | `DEPLOY_SERIAL` | String | `50%` | Rolling‑update batch size (Ansible `serial`). |
 | `DRY_RUN` | Boolean | `false` | Run `ansible-playbook --check --diff` (no changes). |
-| `SKIP_VERIFY` | Boolean | `false` | Skip the post‑deploy health‑check. |
+| `EXTRA_VARS` | String | *(empty)* | Additional Ansible extra vars (e.g. `alloy_package_local_dir=/tmp/packages`). |
 | `EMAIL_RECIPIENTS` | String | *(empty)* | Comma-separated email addresses for notifications. |
 
 ---
@@ -384,9 +445,10 @@ ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory/dev/hos
 | Stage | When | Action |
 |-------|------|--------|
 | **Parameter validation** | Always | Ensures `ALLOY_VERSION` is provided. |
+| **Setup Ansible Collections** | Always | Installs `ansible.windows`, `community.windows`, `amazon.aws`. |
 | **Ansible Lint & Syntax Check** | Always | Runs `ansible-lint` + `ansible-playbook --syntax-check`. Fails fast if issues found. |
-| **Deploy Alloy** | `DRY_RUN == false` | Runs `ansible-playbook` with chosen parameters (uses `sshagent` for SSH keys). |
-| **Post-Deploy Verification** | `DRY_RUN == false` | Verifies Alloy is running via `/-/ready` endpoint. |
+| **Deploy Alloy** | Always (`--check --diff` when `DRY_RUN` is true) | Runs `ansible-playbook` with chosen parameters (AWS SSM credentials from the agent environment). |
+| **Post-Deploy Verification** | `DRY_RUN == false` | Re-runs the playbook with `--tags verify` (Alloy `/-/ready` check). |
 | **Approval (prod only)** | `ENVIRONMENT == 'prod'` | Manual approval gate before production deployment. |
 
 ---
@@ -417,12 +479,15 @@ ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory/dev/hos
 
 > **Note:** `alloy_package_local_dir` must be an **absolute path** on the Ansible controller. Relative paths are resolved against the role/playbook directories, not your current directory, so `../packages` will fail.
 
-### 4. Run against a single host (Windows example)
+### 4. Run against a single host
 ```bash
+# Linux host defined in inventory/dev/hosts.yml
 ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory/dev/hosts.yml ansible/playbooks/deploy_alloy.yml \
   -e "alloy_version=1.19.2 alloy_package_local_dir=/root/grafana-alloy-monitoring/packages alloy_download_base_url=dummy" \
-  --limit windows-dev-01
+  --limit ubuntu-linux-dev-01
 ```
+
+For Windows, uncomment `windows_hosts` in `inventory/dev/hosts.yml` first, then use `--limit windows-dev-01`.
 
 ### How it works
 - If `alloy_package_local_dir` is set and packages exist locally → **uses local packages** (no download)
@@ -434,11 +499,11 @@ ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory/dev/hos
 
 1. **Install required plugins** (Manage Jenkins → Plugins → Available):
    - **Pipeline** (built‑in)
-   - **SSH Agent** (for `sshagent` step)
+   - **Email Extension** (for `emailext` notifications)
    - **Git** (if pulling from a Git repo)
 
-2. **Add credentials** (Credentials → System → Global credentials):
-   - **SSH private key** named `ansible-ssh-key` – the key that can reach your target hosts.
+2. **Configure AWS access for the agent**:
+   - Attach an IAM role with SSM + S3 permissions to the Jenkins agent (recommended), **or** add an AWS credential and bind it with `withCredentials`.
 
 3. **Create a new Pipeline job**:
    - **New Item** → name it (e.g. `Deploy-Alloy-Agent`) → **Pipeline** → OK.

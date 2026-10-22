@@ -5,10 +5,6 @@ alloy_package_checksum: ""
 alloy_download_timeout: 600
 alloy_cleanup_download: true
 
-alloy_config_mode: template
-alloy_config_template: config.alloy.j2
-alloy_config_source: ""
-
 alloy_service_state: started
 alloy_service_enabled: true
 
