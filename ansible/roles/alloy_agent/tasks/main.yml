@@ -31,12 +31,6 @@
         fail_msg: "Alloy version must be major.minor.patch (e.g. 1.19.2)."
         quiet: true
 
-    # Load platform defaults
-    - name: Load platform defaults
-      ansible.builtin.include_vars:
-        file: "{{ role_path }}/vars/{{ ansible_os_family }}.yml"
-        name: _platform
-
     # Resolve package architecture for Linux
     - name: Resolve package architecture (Linux only)
       ansible.builtin.set_fact:
@@ -112,8 +106,8 @@
 
     - name: Set package path and determine source (local or remote)
       ansible.builtin.set_fact:
-        _alloy_pkg_path: "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
-        _alloy_download_url: "{{ alloy_download_base_url }}/v{{ alloy_version }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
+        _alloy_pkg_path: "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform._ansible_platform_defaults.pkg_ext }}"
+        _alloy_download_url: "{{ alloy_download_base_url }}/v{{ alloy_version }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform._ansible_platform_defaults.pkg_ext }}"
         _alloy_use_local: "{{ alloy_package_local_dir | length > 0 }}"
       when:
         - ansible_os_family in ['Debian', 'RedHat', 'Amazon']
@@ -122,7 +116,7 @@
     # Copy package from local directory (for testing) or download from Artifactory
     - name: Copy Alloy package from local directory
       ansible.builtin.copy:
-        src: "{{ alloy_package_local_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
+        src: "{{ alloy_package_local_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform._ansible_platform_defaults.pkg_ext }}"
         dest: "{{ _alloy_pkg_path }}"
       when:
         - ansible_os_family in ['Debian', 'RedHat', 'Amazon']
@@ -147,7 +141,7 @@
     # Backup existing config file (Linux) - keep only previous version (1 backup)
     - name: Check if Alloy config exists (Linux)
       ansible.builtin.stat:
-        path: "{{ _platform.config_path }}"
+        path: "{{ _platform._ansible_platform_defaults.config_path }}"
       register: _config_stat_linux
       when:
         - ansible_os_family != 'Windows'
@@ -156,8 +150,8 @@
 
     - name: Backup existing Alloy config (Linux) - name includes current version
       ansible.builtin.copy:
-        src: "{{ _platform.config_path }}"
-        dest: "{{ _platform.config_path }}.backup-{{ _alloy_installed_version }}"
+        src: "{{ _platform._ansible_platform_defaults.config_path }}"
+        dest: "{{ _platform._ansible_platform_defaults.config_path }}.backup-{{ _alloy_installed_version }}"
         remote_src: true
       when:
         - ansible_os_family != 'Windows'
@@ -170,7 +164,7 @@
     # Remove old backups, keep only latest 1 (Linux)
     - name: Remove old config backups, keep only latest 1 (Linux)
       ansible.builtin.shell: |
-        ls -t {{ _platform.config_path }}.backup-* 2>/dev/null | tail -n +2 | xargs -r rm -f
+        ls -t {{ _platform._ansible_platform_defaults.config_path }}.backup-* 2>/dev/null | tail -n +2 | xargs -r rm -f
       when:
         - ansible_os_family != 'Windows'
         - _alloy_needs_install | bool
@@ -195,17 +189,17 @@
         - not ansible_check_mode
       notify: restart alloy
 
-    # Install/Upgrade Alloy package (RedHat/Rocky/Alma)
-    - name: Install/Upgrade Alloy package (RedHat/Rocky/Alma)
+    # Install/Upgrade Alloy package (RedHat/Rocky/Alma/Amazon/Suse)
+    - name: Install/Upgrade Alloy package (RedHat/Rocky/Alma/Amazon/Suse)
       ansible.builtin.command:
-        cmd: "{{ _platform.pkg_install_cmd }} {{ _alloy_pkg_path }}"
+        cmd: "{{ _platform._ansible_platform_defaults.pkg_install_cmd }} {{ _alloy_pkg_path }}"
       when:
         - ansible_os_family in ['RedHat', 'Amazon', 'Suse']
         - _alloy_needs_install | bool
         - not ansible_check_mode
       notify: restart alloy
 
-    # Verify installation
+    # Verify installation (Debian)
     - name: Re-query installed Alloy version (Debian)
       ansible.builtin.command:
         cmd: "dpkg-query -W -f='${Version}' alloy"
@@ -289,8 +283,8 @@
         _alloy_installed_version: "{{ (_alloy_win_query.stdout | default('')) | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true) }}"
         _alloy_needs_install: "{{ _alloy_installed_version != alloy_version }}"
         _alloy_pkg_url: "{{ alloy_download_base_url }}/v{{ alloy_version }}/alloy-installer-windows-amd64.exe.zip"
-        _alloy_pkg_path: "{{ _platform.temp_dir }}\\alloy-{{ alloy_version }}-installer.zip"
-        _alloy_extract_dir: "{{ _platform.temp_dir }}\\alloy-installer-{{ alloy_version }}"
+        _alloy_pkg_path: "{{ _platform._ansible_platform_defaults.temp_dir }}\\alloy-{{ alloy_version }}-installer.zip"
+        _alloy_extract_dir: "{{ _platform._ansible_platform_defaults.temp_dir }}\\alloy-installer-{{ alloy_version }}"
         _alloy_use_local: "{{ alloy_package_local_dir | length > 0 }}"
       check_mode: false
 
@@ -318,7 +312,7 @@
     # Backup existing config file (Windows) - keep only previous version (1 backup)
     - name: Check if Alloy config exists (Windows)
       ansible.windows.win_stat:
-        path: "{{ _platform.config_path }}"
+        path: "{{ _platform._ansible_platform_defaults.config_path }}"
       register: _config_stat_windows
       when:
         - ansible_os_family == 'Windows'
@@ -328,8 +322,8 @@
     # Backup existing config file (Windows) - keep only previous version (1 backup)
     - name: Backup existing Alloy config (Windows) - name includes current version
       ansible.windows.win_copy:
-        src: "{{ _platform.config_path }}"
-        dest: "{{ _platform.config_path }}.backup-{{ _alloy_installed_version }}"
+        src: "{{ _platform._ansible_platform_defaults.config_path }}"
+        dest: "{{ _platform._ansible_platform_defaults.config_path }}.backup-{{ _alloy_installed_version }}"
         remote_src: true
       when:
         - ansible_os_family == 'Windows'
@@ -342,7 +336,7 @@
     # Remove old backups, keep only latest 1 (Windows)
     - name: Remove old config backups, keep only latest 1 (Windows)
       ansible.windows.win_shell: |
-        $configDir = Split-Path -Path '{{ _platform.config_path }}' -Parent
+        $configDir = Split-Path -Path '{{ _platform._ansible_platform_defaults.config_path }}' -Parent
         $files = Get-ChildItem -Path $configDir -Filter 'config.alloy.backup-*' | Sort-Object LastWriteTime -Descending
         if ($files.Count -gt 1) {
           $files[1..($files.Count-1)] | Remove-Item -Force
@@ -401,7 +395,7 @@
       ansible.windows.win_command:
         cmd: >
           "{{ _alloy_extract_dir }}\\alloy-installer-windows-amd64.exe"
-          /S /FORCEREGISTRY=yes /D={{ _platform.install_dir }}
+          /S /FORCEREGISTRY=yes /D={{ _platform._ansible_platform_defaults.install_dir }}
       when:
         - _alloy_needs_install | bool
         - not ansible_check_mode
@@ -530,7 +524,7 @@
     # Get Alloy version and status for reporting
     - name: Get Alloy version and status for reporting
       ansible.builtin.shell: |
-        echo "ALLOY_VERSION=$(curl -s http://127.0.0.1:{{ alloy_http_port }}/-/metrics 2>/dev/null | grep 'alloy_build_info' | head -1 | sed 's/.*version=\"//;s/\".*//')"
+        echo "ALLOY_VERSION=$(curl -s http://127.0.0.1:{{ alloy_http_port }}/-/metrics 2>/dev/null | grep 'alloy_build_info' | head -1 | sed 's/.*version="//;s/".*//')"
         echo "ALLOY_STATUS=RUNNING"
       register: _alloy_status
       changed_when: false
@@ -560,6 +554,17 @@
         - ansible_os_family == 'Windows'
         - not ansible_check_mode
 
+    # Assert Alloy is ready
+    - name: Assert Alloy is ready
+      ansible.builtin.assert:
+        that:
+          - (_ready.status == 200) or (_ready_w.stdout contains 'READY')
+        fail_msg: >-
+          Alloy did not become ready within the allowed retries. Check service logs.
+        quiet: true
+      when:
+        - not ansible_check_mode
+
     # Display deployment summary
     - name: Deployment summary
       ansible.builtin.debug:
@@ -568,6 +573,6 @@
           Service: {{ alloy_service_name | default('alloy') }} ({{ alloy_service_state }}).
           Version: {{ _alloy_status.stdout_lines[0] | default(_alloy_status_w.stdout_lines[0] | default('unknown')) }}
           Status: {{ _alloy_status.stdout_lines[1] | default(_alloy_status_w.stdout_lines[1] | default('unknown')) }}
-        when: not ansible_check_mode
+      when: not ansible_check_mode
 
   when: not ansible_check_mode
