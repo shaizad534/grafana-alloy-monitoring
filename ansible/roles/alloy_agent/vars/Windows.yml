@@ -1,8 +1,8 @@
 ---
 _ansible_platform_defaults:
   service_name: Alloy
-  config_path: "C:\GrafanaLabs\Alloy\config.alloy"
-  binary_path: "C:\GrafanaLabs\Alloy\alloy-windows-amd64.exe"
-  install_dir: "C:\GrafanaLabs\Alloy"
+  config_path: 'C:\GrafanaLabs\Alloy\config.alloy'
+  binary_path: 'C:\GrafanaLabs\Alloy\alloy-windows-amd64.exe'
+  install_dir: 'C:\GrafanaLabs\Alloy'
   installer_asset: alloy-installer-windows-amd64.exe.zip
-  temp_dir: "C:\Windows\Temp"
+  temp_dir: 'C:\Windows\Temp'
