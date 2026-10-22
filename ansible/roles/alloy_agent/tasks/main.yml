@@ -266,8 +266,27 @@
     # Check currently installed version via registry
     - name: Query installed Alloy version from registry
       ansible.windows.win_shell: |
-        $key = Get-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Alloy' -ErrorAction SilentlyContinue
-        if ($null -ne $key -and $key.DisplayVersion) { Write-Output $key.DisplayVersion } else { Write-Output '' }
+        $paths = @(
+          'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+          'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        )
+        $ver = ''
+        $key = Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue |
+               Where-Object { $_.DisplayName -like '*Alloy*' } |
+               Select-Object -First 1
+        if ($key -and $key.DisplayVersion) { $ver = $key.DisplayVersion }
+        if (-not $ver) {
+          $bin = '{{ _platform._ansible_platform_defaults.binary_path }}'
+          if (Test-Path -LiteralPath $bin) { $ver = (Get-Item -LiteralPath $bin).VersionInfo.ProductVersion }
+        }
+        if (-not $ver) {
+          $bin = '{{ _platform._ansible_platform_defaults.binary_path }}'
+          if (Test-Path -LiteralPath $bin) {
+            $out = & $bin --version 2>$null
+            if ($out -match '(\d+\.\d+\.\d+)') { $ver = $Matches[1] }
+          }
+        }
+        Write-Output $ver
       register: _alloy_win_query
       changed_when: false
       check_mode: false
@@ -413,12 +432,34 @@
     # Verify installation
     - name: Re-query installed version after install
       ansible.windows.win_shell: |
-        $key = Get-ItemProperty -Path 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Alloy' -ErrorAction SilentlyContinue
-        if ($null -ne $key -and $key.DisplayVersion) { Write-Output $key.DisplayVersion } else { Write-Output '' }
+        $paths = @(
+          'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+          'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        )
+        $ver = ''
+        $key = Get-ItemProperty -Path $paths -ErrorAction SilentlyContinue |
+               Where-Object { $_.DisplayName -like '*Alloy*' } |
+               Select-Object -First 1
+        if ($key -and $key.DisplayVersion) { $ver = $key.DisplayVersion }
+        if (-not $ver) {
+          $bin = '{{ _platform._ansible_platform_defaults.binary_path }}'
+          if (Test-Path -LiteralPath $bin) { $ver = (Get-Item -LiteralPath $bin).VersionInfo.ProductVersion }
+        }
+        if (-not $ver) {
+          $bin = '{{ _platform._ansible_platform_defaults.binary_path }}'
+          if (Test-Path -LiteralPath $bin) {
+            $out = & $bin --version 2>$null
+            if ($out -match '(\d+\.\d+\.\d+)') { $ver = $Matches[1] }
+          }
+        }
+        Write-Output $ver
       register: _alloy_post_install
       changed_when: false
       failed_when: false
       check_mode: false
+      until: (_alloy_post_install.stdout | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+')) is not none
+      retries: 10
+      delay: 3
       when:
         - _alloy_needs_install | bool
         - not ansible_check_mode
@@ -430,6 +471,8 @@
         fail_msg: >-
           Installed Alloy version does not match requested version {{ alloy_version }}.
           Installed: {{ _alloy_post_install.stdout | default('none') }}.
+          Installer rc: {{ _install.rc | default('n/a') }}.
+          Installer output: {{ _install.stdout | default('') | trim }}{{ _install.stderr | default('') | trim }}
         quiet: true
       when:
         - _alloy_needs_install | bool
