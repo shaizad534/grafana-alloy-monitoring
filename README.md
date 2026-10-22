@@ -357,9 +357,9 @@ The **Ansible Lint & Syntax Check** stage runs automatically before deployment:
 ## 3️⃣ Quick Local Test (optional)
 
 ```bash
-cd grafana-alloy-monitoring
-ansible-playbook -i ansible/inventory/dev/hosts.yml ansible/playbooks/deploy_alloy.yml \
-  --extra-vars "alloy_version=1.19.2 alloy_download_base_url=https://your-artifactory.example.com/artifactory/grafana-alloy"
+cd /root/grafana-alloy-monitoring
+ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory/dev/hosts.yml ansible/playbooks/deploy_alloy.yml \
+  -e "alloy_version=1.19.2 alloy_download_base_url=https://your-artifactory.example.com/artifactory/grafana-alloy"
 ```
 
 ---
@@ -408,25 +408,18 @@ packages/
 └── alloy-installer-windows-amd64.exe.zip  # Windows
 ```
 
-### 3. Run test script
+### 3. Run the playbook from the project root
 ```bash
-# Test with local packages
-./test-local.sh 1.19.2 dev
+cd /root/grafana-alloy-monitoring
+ANSIBLE_CONFIG=ansible/ansible.cfg ansible-playbook -i ansible/inventory/dev/hosts.yml ansible/playbooks/deploy_alloy.yml \
+  -e "alloy_version=1.19.2 alloy_package_local_dir=/root/grafana-alloy-monitoring/packages alloy_download_base_url=dummy"
 ```
+
+> **Note:** `alloy_package_local_dir` must be an **absolute path** on the Ansible controller. Relative paths are resolved against the role/playbook directories, not your current directory, so `../packages` will fail.
 
 ### How it works
 - If `alloy_package_local_dir` is set and packages exist locally → **uses local packages** (no download)
 - If `alloy_package_local_dir` is empty or packages missing → **downloads from Artifactory**
-
----
-
-## 3️⃣ Quick Local Test (optional)
-
-```bash
-cd grafana-alloy-monitoring
-ansible-playbook -i ansible/inventory/dev/hosts.yml ansible/playbooks/deploy_alloy.yml \
-  --extra-vars "alloy_version=1.19.2 alloy_download_base_url=https://your-artifactory.example.com/artifactory/grafana-alloy"
-```
 
 ---
 
