@@ -71,14 +71,14 @@
       check_mode: false
       when: ansible_os_family == 'Debian'
 
-    - name: Query installed Alloy version (RedHat/Rocky/Alma)
+    - name: Query installed Alloy version (RedHat/Rocky/Alma/Amazon)
       ansible.builtin.command:
         cmd: "rpm -q --qf '%{VERSION}' alloy"
       register: _alloy_pkg_query_rh
       changed_when: false
       failed_when: false
       check_mode: false
-      when: ansible_os_family == 'RedHat'
+      when: ansible_os_family in ['RedHat', 'Amazon']
 
     # Determine if we need to install or upgrade (Debian)
     - name: Determine whether an install or upgrade is required (Debian)
@@ -89,13 +89,13 @@
         - ansible_os_family == 'Debian'
         - _alloy_pkg_query is defined
 
-    # Determine if we need to install or upgrade (RedHat)
-    - name: Determine whether an install or upgrade is required (RedHat)
+    # Determine if we need to install or upgrade (RedHat/Amazon)
+    - name: Determine whether an install or upgrade is required (RedHat/Amazon)
       ansible.builtin.set_fact:
         _alloy_installed_version: "{{ ((_alloy_pkg_query_rh.stdout | default('')) | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true)) }}"
         _alloy_needs_install: "{{ _alloy_installed_version != alloy_version }}"
       when:
-        - ansible_os_family == 'RedHat'
+        - ansible_os_family in ['RedHat', 'Amazon']
         - _alloy_pkg_query_rh is defined
 
     - name: Set package path and determine source (local or remote)
@@ -104,7 +104,7 @@
         _alloy_download_url: "{{ alloy_download_base_url }}/v{{ alloy_version }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
         _alloy_use_local: "{{ alloy_package_local_dir | length > 0 }}"
       when:
-        - ansible_os_family in ['Debian', 'RedHat']
+        - ansible_os_family in ['Debian', 'RedHat', 'Amazon']
         - _alloy_needs_install | bool
 
     # Copy package from local directory (for testing) or download from Artifactory
@@ -113,7 +113,7 @@
         src: "{{ alloy_package_local_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform.pkg_ext }}"
         dest: "{{ _alloy_pkg_path }}"
       when:
-        - ansible_os_family in ['Debian', 'RedHat']
+        - ansible_os_family in ['Debian', 'RedHat', 'Amazon']
         - _alloy_needs_install | bool
         - _alloy_use_local | bool
         - not ansible_check_mode
@@ -126,7 +126,7 @@
         timeout: "{{ alloy_download_timeout }}"
         force: false
       when:
-        - ansible_os_family in ['Debian', 'RedHat']
+        - ansible_os_family in ['Debian', 'RedHat', 'Amazon']
         - _alloy_needs_install | bool
         - not _alloy_use_local | bool
         - not ansible_check_mode
@@ -188,13 +188,13 @@
       ansible.builtin.command:
         cmd: "{{ _platform.pkg_install_cmd }} {{ _alloy_pkg_path }}"
       when:
-        - ansible_os_family in ['RedHat', 'Suse']
+        - ansible_os_family in ['RedHat', 'Amazon', 'Suse']
         - _alloy_needs_install | bool
         - not ansible_check_mode
       notify: restart alloy
 
     # Verify installation
-    - name: Re-query installed Alloy version
+    - name: Re-query installed Alloy version (Debian)
       ansible.builtin.command:
         cmd: "dpkg-query -W -f='${Version}' alloy"
       register: _alloy_installed_verify
@@ -206,7 +206,7 @@
         - _alloy_needs_install | bool
         - not ansible_check_mode
 
-    - name: Assert expected version installed
+    - name: Assert expected version installed (Debian)
       ansible.builtin.assert:
         that:
           - (_alloy_installed_verify.stdout | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true)) == alloy_version
@@ -216,6 +216,32 @@
         quiet: true
       when:
         - ansible_os_family == 'Debian'
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    # Verify installation (RedHat/Amazon)
+    - name: Re-query installed Alloy version (RedHat/Amazon)
+      ansible.builtin.command:
+        cmd: "rpm -q --qf '%{VERSION}' alloy"
+      register: _alloy_installed_verify_rh
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      when:
+        - ansible_os_family in ['RedHat', 'Amazon']
+        - _alloy_needs_install | bool
+        - not ansible_check_mode
+
+    - name: Assert expected version installed (RedHat/Amazon)
+      ansible.builtin.assert:
+        that:
+          - (_alloy_installed_verify_rh.stdout | regex_search('[0-9]+\\.[0-9]+\\.[0-9]+') | default('', true)) == alloy_version
+        fail_msg: >-
+          Installed Alloy version does not match requested version {{ alloy_version }}.
+          Installed: {{ _alloy_installed_verify_rh.stdout | default('none') }}.
+        quiet: true
+      when:
+        - ansible_os_family in ['RedHat', 'Amazon']
         - _alloy_needs_install | bool
         - not ansible_check_mode
 
