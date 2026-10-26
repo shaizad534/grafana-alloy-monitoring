@@ -1,26 +1,105 @@
 ---
+# =============================================================================
+# COMMON VARIABLES (Linux, Windows and the on-prem playbook)
+# =============================================================================
+
 # Alloy version to install (can be overridden via Jenkins: ALLOY_VERSION)
 alloy_version: "1.19.2"
 
-# Artifactory base URL for downloading Alloy packages
-# Override via Jenkins or group_vars: alloy_download_base_url: "https://your-artifactory.example.com/artifactory/grafana-alloy"
-alloy_download_base_url: "https://your-artifactory.example.com/artifactory/grafana-alloy"
+# Base URL for downloading Alloy packages. Override via Jenkins or group_vars
+# to use an internal mirror (for example an Artifactory repository).
+alloy_download_base_url: "https://github.com/grafana/alloy/releases/download"
 
-# Local package directory (for testing without download)
-# Set to a local path like "/path/to/packages" to use local .deb/.rpm/.zip files
+# Optional local package directory (Linux .deb/.rpm and Windows .exe).
+# Set to a local path to skip the download.
 alloy_package_local_dir: ""
 
-# Architecture mapping (Ansible architecture -> Alloy package architecture)
-alloy_arch_map:
-  x86_64: amd64
-  amd64: amd64
-  aarch64: arm64
-  arm64: arm64
+# -----------------------------------------------------------------------------
+# Project artifact source (Bitbucket)
+# -----------------------------------------------------------------------------
+# Leave empty to keep using alloy_download_base_url + /<prefix><version>/ (the
+# Artifactory/GitHub layout). When set, Linux packages are fetched from
+# <artifact_base_url>/<version>/<package>?at=<artifact_branch> and the Windows
+# installer from the parent folder, both with a Bearer token.
+# Example:
+#   https://your-bitbucket.example.com/rest/api/1.0/projects/ICS/repos/your-artifacts-repo/raw/alloy-linux
+artifact_base_url: ""
 
-# Optional: SHA256 checksum for package verification (set per version if needed)
-alloy_package_checksum: ""
-alloy_download_timeout: 600
-alloy_cleanup_download: true
+# Branch for Bitbucket raw URLs (?at=...) and the version path prefix used by
+# the generic download base URL (GitHub publishes under /v<version>/).
+artifact_branch: "master"
+alloy_download_version_prefix: "v"
+
+# Config-service endpoints. The role downloads config.alloy on every run and
+# selects the endpoint for the target OS. Both are enabled by default; replace
+# the placeholder host with your own config-service endpoint.
+config_base_url_linux: "https://your-config-service.example.com/linux/download-config/v2"
+config_base_url_windows: "https://your-config-service.example.com/windows/download-config/v2"
+
+# Secrets - no defaults. Provide them from the Jenkins pipeline configuration
+# (credentials/environment) or from a local, git-ignored vars file for local
+# testing. The install/configure tasks fail with a clear message if missing.
+bitbucket_token: ""
+alloy_static_key: ""
+
+# TLS verification for the artifact and config endpoints. Set to false only
+# while the internal CA is not trusted on the targets.
+validate_certs: true
+
+# Force a reinstall even when the requested version is already installed.
+# Used by the role and by the on-prem standalone playbook.
+force_install: false
+
+# -----------------------------------------------------------------------------
+# Optional exporter installation (Linux and Windows)
+# -----------------------------------------------------------------------------
+# When install_exporter is true the role downloads
+# <exporter_name>-<exporter_version>.zip (or the JMX javaagent naming below)
+# from exporter_repo_root_url, extracts it, locates the JAR, writes the
+# default config for jmx-exporter, and records current.version.
+install_exporter: false
+exporter_name: ""
+exporter_version: ""
+
+# Token for the exporter repository. Defaults to bitbucket_token because the
+# project keeps the Alloy packages and the exporters in the same Bitbucket
+# project. Override with repo_token if they ever differ.
+repo_token: "{{ bitbucket_token }}"
+
+# Leave empty to use the per-OS default (Linux below, Windows in the Windows
+# section).
+exporter_base_dir: ""
+exporter_base_dir_linux: /opt/grafana-alloy/exporters
+
+# Replace the placeholder host and repository with your own Bitbucket location.
+exporter_repo_root_url: "https://your-bitbucket.example.com/rest/api/1.0/projects/ICS/repos/your-artifacts-repo/raw/exporters"
+exporter_repo_branch: "master"
+exporter_cleanup_artifact: true
+
+# When false (default) an existing exporter config file is left alone, so a
+# local edit is not silently reverted on the next run. Set to true to force the
+# default content back on every run.
+exporter_overwrite_config: false
+
+# Default jmx-config.yaml written when exporter_name is jmx-exporter.
+exporter_config_default_content: |
+  startDelaySeconds: 0
+  ssl: false
+  lowercaseOutputName: true
+  lowercaseOutputLabelNames: true
+  rules:
+    - pattern: '.*'
+
+# =============================================================================
+# LINUX VARIABLES (role Linux tasks and the on-prem playbook)
+# =============================================================================
+# alloy_service is the systemd unit name, so paths are built as
+# /etc/systemd/system/{{ alloy_service }}.d.
+alloy_service: alloy.service
+alloy_user: alloy
+alloy_group: alloy
+alloy_config_dir: /etc/alloy
+alloy_data_dir: /var/lib/alloy
 
 # Service settings
 alloy_service_state: started
@@ -30,11 +109,133 @@ alloy_service_enabled: true
 alloy_http_port: 12345
 alloy_verify_retries: 15
 alloy_verify_delay: 4
+alloy_verify_timeout: 10
 
-# Supported exporters (for validation only - your config file defines what's actually used)
-alloy_supported_exporters:
-  - mysql
-  - mssql
-  - oracledb
-  - mongodb
-  - windows
+# Architecture mapping (Ansible architecture -> Alloy package architecture)
+alloy_arch_map:
+  x86_64: amd64
+  amd64: amd64
+  aarch64: arm64
+  arm64: arm64
+
+# Optional: SHA256 checksum for the Linux package (set per version if needed).
+alloy_package_checksum: ""
+
+# RPM signature verification for the role's yum install and the on-prem dnf
+# install. false (default) keeps GPG checking enabled, so the target must trust
+# the key that signed the package. Set true only for unsigned internal RPMs.
+alloy_disable_gpg_check: false
+
+alloy_download_timeout: 120
+
+# Remove the downloaded Linux package after install. The Windows installer is
+# kept in work_dir for troubleshooting (same as the reference playbook).
+alloy_cleanup_download: true
+
+# Environment file read by the packaged systemd unit (EnvironmentFile). It is
+# created only when missing, so an existing file is never overwritten.
+alloy_env_file: /etc/default/alloy
+alloy_custom_args: "--server.http.listen-addr=127.0.0.1:12345 --disable-reporting=true"
+
+# Alloy binary used by `alloy validate` before a downloaded config replaces the
+# live one (Linux role and on-prem play).
+alloy_binary_path: /usr/bin/alloy
+
+# Log files Alloy should be able to read. Missing files are skipped; existing
+# files get an r ACL that is read back with getfacl.
+alloy_log_files:
+  - /var/log/messages
+  - /var/log/secure
+  - /var/log/syslog
+
+# Supplementary groups to add the alloy user to when they exist.
+alloy_extra_groups:
+  - oinstall
+  - asmadmin
+  - adm
+  - systemd-journal
+
+# systemd drop-in resource limits.
+alloy_cpu_quota: "30%"
+alloy_memory_high: "500M"
+alloy_memory_max: "700M"
+
+# =============================================================================
+# WINDOWS VARIABLES (role Windows tasks only)
+# =============================================================================
+# The Windows installer is a single .exe. When artifact_base_url is set, the
+# URL is derived from its parent folder (the Linux and Windows artifacts live
+# side by side under raw/):
+#   <artifact_base_url parent>/<installer name>?at=<artifact_branch>
+# Otherwise the generic versioned layout is used:
+#   <alloy_download_base_url>/<prefix><alloy_version>/<installer name>
+alloy_windows_installer_name: alloy-installer-windows-amd64.exe
+installer_url: >-
+  {{
+    (artifact_base_url | regex_replace('/[^/]+/?$', '') ~ '/' ~ alloy_windows_installer_name ~ '?at=' ~ (artifact_branch | urlencode))
+    if (artifact_base_url | length > 0)
+    else (alloy_download_base_url ~ '/' ~ alloy_download_version_prefix ~ alloy_version ~ '/' ~ alloy_windows_installer_name)
+  }}
+
+work_dir: 'C:\Temp\Alloy'
+installer_path: '{{ work_dir }}\{{ alloy_windows_installer_name }}'
+alloy_dir: 'C:\Program Files\GrafanaLabs\Alloy'
+alloy_uninstaller: '{{ alloy_dir }}\uninstall.exe'
+alloy_config_path: '{{ alloy_dir }}\config.alloy'
+# Windows service name. The Linux/on-prem service is alloy_service above.
+alloy_windows_service: Alloy
+
+# SHA256 checksum of the Windows .exe installer. Kept separate from
+# alloy_package_checksum because the Linux package and Windows installer are
+# different files. Verification is required by default for remote installs;
+# set alloy_require_windows_installer_checksum to false only for a lab run.
+alloy_windows_installer_checksum: ""
+alloy_require_windows_installer_checksum: true
+
+# Windows exporter base directory (used when exporter_base_dir is empty).
+exporter_base_dir_windows: 'C:\ProgramData\GrafanaLabs\Alloy\exporters'
+
+# =============================================================================
+# ON-PREM VARIABLES (deploy_alloy_onprem.yml, imported by deploy_alloy.yml)
+# =============================================================================
+# The play loads this whole file through vars_files, so the shared Linux
+# values above are not repeated here: alloy_service, alloy_user, alloy_group,
+# alloy_config_dir, alloy_data_dir, alloy_arch_map, alloy_http_port,
+# validate_certs, alloy_service_state, alloy_service_enabled, alloy_verify_*,
+# alloy_cleanup_download, alloy_download_timeout, alloy_log_files and
+# alloy_extra_groups.
+#
+# Gate and inventory group for the imported on-prem play. `deploy_onprem`
+# defaults to false, so a normal Linux/Windows run skips the play; enable it
+# with `-e deploy_onprem=true` (Jenkins does this for PLAYBOOK=onprem).
+# Because this file is loaded through vars_files, -e is the override mechanism
+# (vars_files outrank inventory group_vars).
+deploy_onprem: false
+target_group_onprem: linux_servers
+
+# The on-prem play uses this value when it writes the systemd drop-in
+# (override.conf) on the target. It defaults to the role cap above, so there is
+# one source of truth; override it only when on-prem needs a different cap.
+alloy_onprem_memory_max: "{{ alloy_memory_max }}"
+
+# The canonical entry point is ansible/playbooks/deploy_alloy.yml, which
+# imports the on-prem play, so playbook_dir is ansible/playbooks. Running the
+# on-prem file directly keeps playbook_dir at ansible/roles/alloy_agent/tasks.
+# Both resolve to the repository root, where packages/ and configs/ live.
+# Jenkins overrides these with absolute workspace paths.
+alloy_pkg_dir: >-
+  {{
+    (playbook_dir ~ '/../../packages')
+    if (playbook_dir | basename) == 'playbooks'
+    else (playbook_dir ~ '/../../../../packages')
+  }}
+
+# Directory holding the on-prem support files. Today that is only
+# config_alloy.sh, the script that downloads config.alloy from the config
+# service on the target. config.alloy is never copied from this directory.
+alloy_support_files_dir: >-
+  {{
+    (playbook_dir ~ '/../../configs')
+    if (playbook_dir | basename) == 'playbooks'
+    else (playbook_dir ~ '/../../../../configs')
+  }}

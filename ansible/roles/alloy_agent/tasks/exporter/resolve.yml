@@ -1,0 +1,56 @@
+---
+# Shared exporter input validation and resolution. Included by the role
+# (tasks/main.yml preflight) and by the on-prem play
+# (tasks/deploy_alloy_onprem.yml pre_tasks). Callers set _alloy_use_exporter.
+- name: Validate exporter inputs
+  ansible.builtin.assert:
+    that:
+      - exporter_name | trim | length > 0
+      - exporter_version | trim | length > 0
+      - repo_token | trim | length > 0
+      - exporter_repo_root_url | trim | length > 0
+    fail_msg: >-
+      install_exporter is true, so exporter_name, exporter_version,
+      repo_token (or bitbucket_token) and exporter_repo_root_url are required.
+      Example: -e install_exporter=true -e exporter_name=jmx-exporter
+      -e exporter_version=1.5.0
+    quiet: true
+  when: _alloy_use_exporter | bool
+
+- name: Resolve exporter base directory
+  ansible.builtin.set_fact:
+    _alloy_exporter_base_dir: >-
+      {{
+        exporter_base_dir
+        if (exporter_base_dir | length > 0)
+        else (exporter_base_dir_windows if ansible_os_family == 'Windows' else exporter_base_dir_linux)
+      }}
+  when: _alloy_use_exporter | bool
+
+- name: Normalize exporter name and version
+  ansible.builtin.set_fact:
+    _alloy_exporter_name: "{{ exporter_name | lower | trim }}"
+    _alloy_exporter_version: "{{ exporter_version | trim }}"
+    _alloy_exporter_repo_folder: "{{ exporter_name | lower | trim }}"
+  when: _alloy_use_exporter | bool
+
+- name: Resolve exporter artifact and config names
+  ansible.builtin.set_fact:
+    _alloy_exporter_artifact_name: >-
+      {{
+        ('jmx_prometheus_javaagent-' ~ _alloy_exporter_version ~ '.zip')
+        if _alloy_exporter_name == 'jmx-exporter'
+        else (_alloy_exporter_name ~ '-' ~ _alloy_exporter_version ~ '.zip')
+      }}
+    _alloy_exporter_config_file_name: >-
+      {{
+        'jmx-config.yaml'
+        if _alloy_exporter_name == 'jmx-exporter'
+        else (_alloy_exporter_name ~ '-config.yaml')
+      }}
+  when: _alloy_use_exporter | bool
+
+- name: Build exporter artifact URL
+  ansible.builtin.set_fact:
+    _alloy_exporter_artifact_url: "{{ exporter_repo_root_url }}/{{ _alloy_exporter_repo_folder }}/{{ _alloy_exporter_artifact_name }}?at={{ exporter_repo_branch | urlencode }}"
+  when: _alloy_use_exporter | bool

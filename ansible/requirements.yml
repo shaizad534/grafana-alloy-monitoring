@@ -2,8 +2,9 @@
 collections:
   - name: ansible.windows
     version: ">=3.2.0"
-  - name: community.windows
-    version: ">=2.6.0"
+  # Required for the Linux ACL tasks (log file access for the alloy user)
+  - name: ansible.posix
+    version: ">=1.5.0"
   # Required for the AWS SSM connection plugin used by the inventories
   - name: amazon.aws
     version: ">=8.0.0"

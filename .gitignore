@@ -1,3 +1,6 @@
 # Downloaded Grafana Alloy installers
 packages/*
 !packages/.gitkeep
+
+# Local secrets (bitbucket_token / alloy_static_key) - never commit
+secrets.yml

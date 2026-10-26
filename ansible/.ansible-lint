@@ -1,0 +1,25 @@
+---
+# Configuration for the Jenkins "Ansible Lint & Syntax Check" stage.
+#
+# `safety` keeps the correctness rules (no-changed-when, risky-shell-pipe,
+# risky-file-permissions, ...) but drops the purely stylistic rules from the
+# `production` profile. The skips below are deliberate.
+profile: safety
+
+# The on-prem play lives in the role's tasks directory (imported by
+# playbooks/deploy_alloy.yml) and keeps its original style. It is excluded
+# from linting; the Jenkins syntax check still parses it through the import.
+exclude_paths:
+  - roles/alloy_agent/tasks/deploy_alloy_onprem.yml
+
+skip_list:
+  # Config backups must inherit the original ownership/permissions, and
+  # ansible.windows.win_copy has no `mode` parameter at all.
+  - risky-file-permissions
+  # Multi-line shell/win_shell scripts cannot be expressed with `cmd:` alone;
+  # `cmd:`/`argv:` is used everywhere it is viable.
+  - no-free-form
+  # Established variable namespace for this role (`alloy_agent` -> `alloy_*`).
+  - var-naming[no-role-prefix]
+  # Long PowerShell and metrics one-liners are intentional.
+  - yaml[line-length]

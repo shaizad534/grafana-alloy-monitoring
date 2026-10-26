@@ -1,36 +1,40 @@
 ---
-alloy_version: "1.19.2"
-alloy_download_base_url: "https://github.com/grafana/alloy/releases/download"
-alloy_package_checksum: ""
-alloy_download_timeout: 600
-alloy_cleanup_download: true
+# Environment overrides only. The canonical defaults live in
+# ansible/roles/alloy_agent/defaults/main.yml; do not repeat them here.
+# Uncomment a key below only when this environment needs a different value.
 
-alloy_service_state: started
-alloy_service_enabled: true
-
-alloy_http_port: 12345
-alloy_scrape_interval: "60s"
-alloy_scrape_self: true
-alloy_job_name_prefix: ""
-
-alloy_remote_write_name: primary
-alloy_remote_write_url: ""
-alloy_remote_write_username: ""
-alloy_remote_write_password: ""
-
-alloy_exporter_mysql:
-  enabled: false
-alloy_exporter_mssql:
-  enabled: false
-alloy_exporter_oracledb:
-  enabled: false
-alloy_exporter_mongodb:
-  enabled: false
-alloy_exporters_extra: {}
-
-alloy_forward_to: []
-alloy_additional_config: ""
-
-alloy_verify_healthy: false
-alloy_verify_retries: 15
-alloy_verify_delay: 4
+# -----------------------------------------------------------------------------
+# Project Bitbucket/config-service integration (Linux and Windows)
+# -----------------------------------------------------------------------------
+# Uncomment and set these for the project. `artifact_base_url` switches the
+# package source from alloy_download_base_url to Bitbucket for Linux and
+# Windows. The config-service URLs are set per OS in defaults/main.yml
+# (config_base_url_linux / config_base_url_windows); uncomment them to
+# override for this environment.
+#
+# artifact_base_url: "https://your-bitbucket.example.com/rest/api/1.0/projects/ICS/repos/your-artifacts-repo/raw/alloy-linux"
+# config_base_url_linux: "https://your-config-service.example.com/linux/download-config/v2"
+# config_base_url_windows: "https://your-config-service.example.com/windows/download-config/v2"
+# validate_certs: false
+#
+# Secrets: set bitbucket_token and alloy_static_key from the Jenkins pipeline
+# configuration (credentials/environment) or, for local testing, from a
+# git-ignored vars file passed with `-e @secrets.yml`. Do not commit them.
+#
+# NOTE: config.alloy is downloaded from the config service on both Linux and
+# Windows, so the role does not template remote_write/scrape settings. The old
+# templating keys (alloy_exporter_*, alloy_remote_write_*, alloy_scrape_*,
+# alloy_forward_to, alloy_additional_config, alloy_verify_healthy) and the
+# per-database group_vars/db_*.yml files were removed. Exporter artifacts are
+# installed by the separate install_exporter flow below.
+#
+# Optional exporter artifact installation (Linux and Windows). Leave
+# install_exporter false to skip it. repo_token defaults to bitbucket_token.
+#
+# install_exporter: false
+# exporter_name: "jmx-exporter"
+# exporter_version: "1.5.0"
+# exporter_repo_root_url: "https://your-bitbucket.example.com/rest/api/1.0/projects/ICS/repos/your-artifacts-repo/raw/exporters"
+# exporter_repo_branch: "master"
+# exporter_base_dir: ""   # empty -> /opt/grafana-alloy/exporters (Linux) or C:\ProgramData\GrafanaLabs\Alloy\exporters (Windows)
+{}

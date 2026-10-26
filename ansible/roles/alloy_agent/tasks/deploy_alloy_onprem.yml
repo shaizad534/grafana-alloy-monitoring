@@ -1,0 +1,353 @@
+---
+- name: Install and configure Grafana Alloy agent (on-prem, multi-distro)
+  # Imported by ansible/playbooks/deploy_alloy.yml. It only runs when
+  # deploy_onprem=true (Jenkins sets it for PLAYBOOK=onprem). When the gate is
+  # false the play targets 'all' with fact gathering off and ends in the first
+  # pre_task, so normal Linux/Windows runs are unaffected and Ansible does not
+  # warn about a missing linux_servers group.
+  hosts: >-
+    {{
+      (target_group_onprem | default('linux_servers'))
+      if (deploy_onprem | default(false) | bool)
+      else 'all'
+    }}
+  gather_facts: "{{ deploy_onprem | default(false) | bool }}"
+  become: yes
+  # Single source of truth: the role's defaults. On-prem-only values live in
+  # the "On-prem play" section of that file. Extra vars (-e) still override
+  # everything.
+  vars_files:
+    - ../defaults/main.yml
+  pre_tasks:
+    # Gate: this play is imported by deploy_alloy.yml and only runs for
+    # on-prem servers. `tags: [always]` keeps the gate active on tagged runs
+    # such as `--tags verify`.
+    - name: Skip the on-prem play unless deploy_onprem is true
+      ansible.builtin.meta: end_play
+      when: not (deploy_onprem | default(false) | bool)
+      tags: [always]
+
+    # ---------------------------------------------------------------
+    # PRE-CHECK: Validate OS family is supported before doing anything
+    # ---------------------------------------------------------------
+    - name: Validate supported OS family
+      ansible.builtin.fail:
+        msg: >
+          Unsupported OS family '{{ ansible_os_family }}' on host '{{ inventory_hostname }}'.
+          Supported families: RedHat, Debian.
+      when: ansible_os_family not in ["RedHat", "Debian"]
+    - name: Resolve package architecture
+      ansible.builtin.set_fact:
+        _alloy_arch: "{{ alloy_arch_map[ansible_architecture] | default(ansible_architecture) }}"
+    # ---------------------------------------------------------------
+    # PRE-CHECK: Validate required source files exist on control node
+    # ---------------------------------------------------------------
+    - name: Check RPM package exists on control node (RHEL)
+      ansible.builtin.stat:
+        path: "{{ alloy_pkg_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.rpm"
+      delegate_to: localhost
+      become: no
+      register: rpm_stat
+      when: ansible_os_family == "RedHat"
+    - name: Fail if RPM package is missing (RHEL)
+      ansible.builtin.fail:
+        msg: "RPM package not found at {{ alloy_pkg_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.rpm"
+      when:
+        - ansible_os_family == "RedHat"
+        - not rpm_stat.stat.exists
+    - name: Check DEB package exists on control node (Ubuntu/Debian)
+      ansible.builtin.stat:
+        path: "{{ alloy_pkg_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.deb"
+      delegate_to: localhost
+      become: no
+      register: deb_stat
+      when: ansible_os_family == "Debian"
+    - name: Fail if DEB package is missing (Ubuntu/Debian)
+      ansible.builtin.fail:
+        msg: "DEB package not found at {{ alloy_pkg_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.deb"
+      when:
+        - ansible_os_family == "Debian"
+        - not deb_stat.stat.exists
+    - name: Check config download script exists on control node
+      ansible.builtin.stat:
+        path: "{{ alloy_support_files_dir }}/config_alloy.sh"
+      delegate_to: localhost
+      become: no
+      register: config_script_stat
+    - name: Fail if the config download script is missing
+      ansible.builtin.fail:
+        msg: >-
+          config_alloy.sh not found at
+          {{ alloy_support_files_dir }}/config_alloy.sh.
+          This script downloads config.alloy from the config service on the
+          target, so the on-prem play cannot run without it. Add the file, or
+          point alloy_support_files_dir at the directory that contains it.
+      when: not config_script_stat.stat.exists
+    # ---------------------------------------------------------------
+    # PRE-CHECK: Detect if correct Alloy version is already installed
+    # ---------------------------------------------------------------
+    - name: Check installed Alloy version (RHEL)
+      ansible.builtin.command: rpm -q --qf '%{VERSION}' alloy
+      register: installed_version_rpm
+      failed_when: false
+      changed_when: false
+      when: ansible_os_family == "RedHat"
+    - name: Check installed Alloy version (Ubuntu/Debian)
+      ansible.builtin.command: dpkg-query -W -f='${Version}' alloy
+      register: installed_version_deb_raw
+      failed_when: false
+      changed_when: false
+      when: ansible_os_family == "Debian"
+    - name: Normalize installed DEB version (strip epoch/revision suffix)
+      ansible.builtin.set_fact:
+        installed_version_deb: "{{ {'stdout': installed_version_deb_raw.stdout.split('-')[0]} }}"
+      when: ansible_os_family == "Debian"
+    - name: Set alloy_already_installed fact (RHEL)
+      ansible.builtin.set_fact:
+        alloy_already_installed: >-
+          {{
+            (installed_version_rpm.stdout | regex_search('[0-9]+\.[0-9]+\.[0-9]+') | default('', true))
+            == alloy_version
+          }}
+      when: ansible_os_family == "RedHat"
+    - name: Set alloy_already_installed fact (Ubuntu/Debian)
+      ansible.builtin.set_fact:
+        alloy_already_installed: "{{ installed_version_deb.stdout == alloy_version }}"
+      when:
+        - ansible_os_family == "Debian"
+        - installed_version_deb is defined
+    - name: Report installation status
+      ansible.builtin.debug:
+        msg: >-
+          Alloy is
+          {{ 'already installed (' + installed_version_rpm.stdout | trim + ') - skipping package copy and install'
+             if (ansible_os_family == 'RedHat' and alloy_already_installed)
+             else 'already installed - skipping package copy and install'
+             if alloy_already_installed
+             else 'not installed - will install ' + alloy_version + ' now' }}
+      when: alloy_already_installed is defined
+
+    # ---------------------------------------------------------------
+    # PRE-CHECK: Validate and resolve exporter inputs (shared with the role)
+    # ---------------------------------------------------------------
+    - name: Resolve exporter toggle
+      ansible.builtin.set_fact:
+        _alloy_use_exporter: "{{ install_exporter | bool }}"
+
+    - name: Validate and resolve exporter inputs
+      ansible.builtin.include_tasks: exporter/resolve.yml
+
+  tasks:
+    # ---------------------------------------------------------------
+    # STEP 1: Install the Alloy package (distro-specific)
+    # ---------------------------------------------------------------
+    - name: Copy Alloy RPM to remote host (RHEL)
+      ansible.builtin.copy:
+        src: "{{ alloy_pkg_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.rpm"
+        dest: "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.rpm"
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - ansible_os_family == "RedHat"
+        - not alloy_already_installed or force_install | bool
+    - name: Verify the on-prem RPM signature before install
+      ansible.builtin.command:
+        argv:
+          - rpm
+          - --checksig
+          - "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.rpm"
+      register: _alloy_onprem_rpm_sig
+      changed_when: false
+      failed_when: false
+      when:
+        - ansible_os_family == "RedHat"
+        - not alloy_already_installed or force_install | bool
+        - not (alloy_disable_gpg_check | bool)
+        - not ansible_check_mode
+    - name: Fail when the on-prem RPM signature is not trusted
+      ansible.builtin.fail:
+        msg: >-
+          RPM signature verification failed for
+          /tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.rpm.
+          Import the signing key on the target, or set
+          alloy_disable_gpg_check=true for an unsigned internal RPM.
+          rpm --checksig output: {{ _alloy_onprem_rpm_sig.stdout | default('') }}
+          {{ _alloy_onprem_rpm_sig.stderr | default('') }}
+      when:
+        - ansible_os_family == "RedHat"
+        - not alloy_already_installed or force_install | bool
+        - not (alloy_disable_gpg_check | bool)
+        - not ansible_check_mode
+        - "'signatures OK' not in ((_alloy_onprem_rpm_sig.stdout | default('')) ~ ' ' ~ (_alloy_onprem_rpm_sig.stderr | default('')))"
+    - name: Install Alloy RPM via dnf (RHEL/CentOS/Fedora/Oracle)
+      ansible.builtin.dnf:
+        name: "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.rpm"
+        state: present
+        disable_gpg_check: "{{ alloy_disable_gpg_check | bool }}"
+      when:
+        - ansible_os_family == "RedHat"
+        - not alloy_already_installed or force_install | bool
+      register: dnf_result
+      failed_when:
+        - dnf_result.rc is defined
+        - dnf_result.rc != 0
+        - "'already installed' not in dnf_result.msg | default('')"
+    - name: Copy Alloy DEB to remote host (Ubuntu/Debian)
+      ansible.builtin.copy:
+        src: "{{ alloy_pkg_dir }}/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.deb"
+        dest: "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.deb"
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - ansible_os_family == "Debian"
+        - not alloy_already_installed or force_install | bool
+    - name: Install Alloy DEB via apt (Ubuntu/Debian)
+      ansible.builtin.apt:
+        deb: "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.deb"
+        state: present
+      when:
+        - ansible_os_family == "Debian"
+        - not alloy_already_installed or force_install | bool
+    # ---------------------------------------------------------------
+    # STEP 2: Ensure config directory exists before downloading config
+    # ---------------------------------------------------------------
+    - name: Ensure Alloy config directory exists
+      ansible.builtin.file:
+        path: "{{ alloy_config_dir }}"
+        state: directory
+        owner: "{{ alloy_user }}"
+        group: "{{ alloy_group }}"
+        mode: "0750"
+    # ---------------------------------------------------------------
+    # STEP 3: Download per-host configuration from the config server
+    # ---------------------------------------------------------------
+    - name: Copy configuration download script to remote host
+      ansible.builtin.copy:
+        src: "{{ alloy_support_files_dir }}/config_alloy.sh"
+        dest: /tmp/config_alloy.sh
+        owner: root
+        group: root
+        mode: "0700"
+    - name: Run the configuration download script
+      ansible.builtin.command:
+        cmd: /bin/bash /tmp/config_alloy.sh
+      register: sh_output
+      changed_when: sh_output.rc == 0
+      failed_when: sh_output.rc != 0
+    - name: Show configuration script output
+      ansible.builtin.debug:
+        var: sh_output.stdout_lines
+      when:
+        - not ansible_check_mode
+        - sh_output.stdout_lines | length > 0
+    # ---------------------------------------------------------------
+    # STEP 4: Validate the downloaded config (shared with the role)
+    # ---------------------------------------------------------------
+    - name: Validate the downloaded Alloy configuration
+      ansible.builtin.include_tasks: configure/validate_config.yml
+      when: not ansible_check_mode
+      vars:
+        _alloy_config_validate_path: "{{ alloy_config_dir }}/config.alloy"
+        _alloy_config_validate_fail_msg: >-
+          The config file at {{ alloy_config_dir }}/config.alloy is missing,
+          empty, or contains a config-service error for
+          {{ inventory_hostname }}. The host is probably not registered in the
+          config service. Register it and re-run.
+
+    # ---------------------------------------------------------------
+    # STEP 4A: Exporter Installation (shared with the role)
+    # ---------------------------------------------------------------
+    - name: Install exporter
+      ansible.builtin.include_tasks: exporter/install_linux.yml
+      when: install_exporter | bool
+
+    # ---------------------------------------------------------------
+    # STEP 5: Drop-in, data dir, ACLs, groups and restart (shared with
+    # the role). The on-prem play keeps override.conf and uses
+    # alloy_onprem_memory_max (700M by default).
+    # ---------------------------------------------------------------
+    - name: Apply Linux post-configuration
+      ansible.builtin.include_tasks: configure/linux_post.yml
+      vars:
+        _alloy_dropin_file: override.conf
+        _alloy_dropin_mode: "0640"
+        _alloy_dropin_memory_max: "{{ alloy_onprem_memory_max }}"
+        _alloy_restart_ignore_errors: true
+
+    # ---------------------------------------------------------------
+    # STEP 6: Enable and start the Alloy service
+    # ---------------------------------------------------------------
+    - name: Enable and start Alloy service
+      ansible.builtin.systemd:
+        name: "{{ alloy_service }}"
+        enabled: "{{ alloy_service_enabled }}"
+        state: "{{ alloy_service_state }}"
+    # ---------------------------------------------------------------
+    # STEP 7: Wait for service to stabilize then verify
+    # ---------------------------------------------------------------
+    - name: Wait for Alloy service to become active
+      ansible.builtin.systemd:
+        name: "{{ alloy_service }}"
+      register: alloy_status
+      retries: "{{ alloy_verify_retries }}"
+      delay: "{{ alloy_verify_delay }}"
+      until: alloy_status.status.ActiveState == "active"
+      failed_when: alloy_status.status.ActiveState == "failed"
+    - name: Verify Alloy HTTP endpoint is reachable
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ alloy_http_port }}"
+        method: GET
+        status_code: [200, 302]
+        timeout: "{{ alloy_verify_timeout }}"
+      register: alloy_http
+      retries: "{{ alloy_verify_retries }}"
+      delay: "{{ alloy_verify_delay }}"
+      until: alloy_http.status in [200, 302]
+      ignore_errors: yes
+    # ---------------------------------------------------------------
+    # STEP 8: Final status report
+    # ---------------------------------------------------------------
+    - name: Get actual installed Alloy version
+      ansible.builtin.command: alloy --version
+      register: alloy_actual_version
+      changed_when: false
+      failed_when: false
+    - name: Final deployment status report
+      ansible.builtin.debug:
+        msg:
+          - "Host             : {{ inventory_hostname }}"
+          - "OS Family        : {{ ansible_os_family }}"
+          - "Target version   : {{ alloy_version }}"
+          - "Installed version: {{ alloy_actual_version.stdout_lines[0] | default('unknown') }}"
+          - "Version match    : {{ 'YES' if alloy_version in (alloy_actual_version.stdout | default('')) else 'NO — installed version differs from target (set force_install=true to reinstall)' }}"
+          - "Service state    : {{ alloy_status.status.ActiveState }}"
+          - "HTTP endpoint    : {{ 'reachable' if (alloy_http.status | default(0)) in [200, 302] else 'unreachable (check firewall/config)' }}"
+          - "Config file      : {{ alloy_config_dir }}/config.alloy"
+          - "Exporter enabled : {{ install_exporter }}"
+          - "Exporter name    : {{ _alloy_exporter_name | default('not provided') }}"
+          - "Exporter version : {{ _alloy_exporter_version | default('not provided') }}"
+          - "Exporter jar     : {{ _alloy_exporter_jar_path | default('not installed') }}"
+          
+    # ---------------------------------------------------------------
+    # CLEANUP: Remove temp package files from /tmp
+    # ---------------------------------------------------------------
+    - name: Remove temporary RPM package from /tmp
+      ansible.builtin.file:
+        path: "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.rpm"
+        state: absent
+      when:
+        - ansible_os_family == "RedHat"
+        - alloy_cleanup_download | bool
+    - name: Remove temporary DEB package from /tmp
+      ansible.builtin.file:
+        path: "/tmp/alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.deb"
+        state: absent
+      when:
+        - ansible_os_family == "Debian"
+        - alloy_cleanup_download | bool
+    - name: Remove temporary config script from /tmp
+      ansible.builtin.file:
+        path: /tmp/config_alloy.sh
+        state: absent

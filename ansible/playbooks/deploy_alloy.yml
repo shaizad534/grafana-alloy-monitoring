@@ -1,5 +1,9 @@
 ---
-- name: Deploy Grafana Alloy on Linux database hosts
+# Single entry point for every deployment type:
+#   1. Linux role    (target_group_linux, defaults to linux_hosts)
+#   2. Windows role  (target_group_windows, defaults to windows_hosts)
+#   3. On-prem play  (imported below, only when deploy_onprem=true)
+- name: Deploy Grafana Alloy on Linux hosts
   hosts: "{{ target_group_linux | default('linux_hosts') }}"
   become: true
   gather_facts: true
@@ -7,7 +11,7 @@
   roles:
     - role: alloy_agent
 
-- name: Deploy Grafana Alloy on Windows database hosts
+- name: Deploy Grafana Alloy on Windows hosts
   hosts: "{{ target_group_windows | default('windows_hosts') }}"
   # gather_facts cannot be used here: the default 'setup' module is Python and
   # only resolves to ansible.windows.setup with winrm/psrp connections.
@@ -21,3 +25,10 @@
       tags: [always]
   roles:
     - role: alloy_agent
+
+# On-prem playbook, imported so deploy_alloy.yml is the only playbook Jenkins
+# runs. The imported play is gated on deploy_onprem (default false): when it is
+# false the play targets all hosts with fact gathering off and ends in its first
+# task, so nothing is contacted and no linux_servers warning is printed.
+# Jenkins passes deploy_onprem=true when PLAYBOOK=onprem.
+- import_playbook: ../roles/alloy_agent/tasks/deploy_alloy_onprem.yml

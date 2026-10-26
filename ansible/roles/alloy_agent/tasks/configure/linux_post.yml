@@ -1,0 +1,179 @@
+---
+# Shared Linux post-configuration: data dir, ACLs, supplementary groups,
+# systemd drop-in and the restart that applies them. Included by the role
+# (tasks/main.yml) and by the on-prem play (tasks/deploy_alloy_onprem.yml).
+# Callers set:
+#   _alloy_dropin_file            drop-in filename (limits.conf / override.conf)
+#   _alloy_dropin_mode            drop-in file mode
+#   _alloy_dropin_memory_max      MemoryMax value for the drop-in
+#   _alloy_restart_ignore_errors  keep going when the restart fails (on-prem)
+- name: Ensure Alloy data directory exists
+  ansible.builtin.file:
+    path: "{{ alloy_data_dir }}"
+    state: directory
+    owner: "{{ alloy_user }}"
+    group: "{{ alloy_group }}"
+    mode: "0700"
+
+- name: Ensure ACL tooling is present (needed for setfacl)
+  ansible.builtin.package:
+    name: acl
+    state: present
+
+# Only existing files get an ACL; a distro without /var/log/messages or
+# /var/log/secure is normal. Missing files are reported by the stat loop and
+# skipped instead of hiding every failure behind failed_when: false.
+- name: Check which configured log files exist
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ alloy_log_files }}"
+  register: _alloy_log_file_stat
+
+- name: Grant Alloy read access to configured log files
+  ansible.posix.acl:
+    path: "{{ item.item }}"
+    entity: "{{ alloy_user }}"
+    etype: user
+    permissions: r
+    state: present
+  loop: "{{ _alloy_log_file_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.stat.exists
+
+- name: Set default ACL on /var/log for rotated files
+  ansible.posix.acl:
+    path: /var/log
+    entity: "{{ alloy_user }}"
+    etype: user
+    permissions: rx
+    default: yes
+    state: present
+
+# Verification: read back the ACLs instead of assuming the grant worked.
+# getfacl runs even in check mode so its output is available; the assertions
+# are skipped in check mode because the ACL has not actually been applied.
+- name: Read ACLs of existing log files
+  ansible.builtin.command:
+    argv:
+      - getfacl
+      - -cp
+      - "{{ item.item }}"
+  loop: "{{ _alloy_log_file_stat.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  register: _alloy_log_file_acl
+  changed_when: false
+  check_mode: false
+  when: item.stat.exists
+
+- name: Assert Alloy has read access to every configured log file
+  ansible.builtin.assert:
+    that:
+      - ("user:" ~ alloy_user ~ ":r--") in item.stdout
+    fail_msg: >-
+      Missing ACL user:{{ alloy_user }}:r-- on {{ item.item }}.
+      getfacl output: {{ item.stdout }}
+    quiet: true
+  loop: "{{ _alloy_log_file_acl.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - not ansible_check_mode
+    - item.stdout is defined
+
+- name: Read the default ACL on /var/log
+  ansible.builtin.command:
+    argv:
+      - getfacl
+      - -cp
+      - /var/log
+  register: _alloy_var_log_acl
+  changed_when: false
+  check_mode: false
+
+- name: Assert Alloy has the default ACL on /var/log
+  ansible.builtin.assert:
+    that:
+      - ("default:user:" ~ alloy_user ~ ":r-x") in _alloy_var_log_acl.stdout
+    fail_msg: >-
+      Missing default:user:{{ alloy_user }}:r-x on /var/log.
+      getfacl output: {{ _alloy_var_log_acl.stdout }}
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Check which supplementary groups exist
+  ansible.builtin.getent:
+    database: group
+    key: "{{ item }}"
+    fail_key: false
+  loop: "{{ alloy_extra_groups }}"
+  register: _alloy_group_check
+
+- name: Add Alloy user to existing supplementary groups
+  ansible.builtin.user:
+    name: "{{ alloy_user }}"
+    groups: "{{ item.item }}"
+    append: true
+  loop: "{{ _alloy_group_check.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.ansible_facts.getent_group[item.item] is not none
+
+# Create the environment file read by the packaged systemd unit. force: false
+# means an existing file is never modified, so local edits survive every run.
+- name: Create the Alloy environment file with CUSTOM_ARGS
+  ansible.builtin.copy:
+    dest: "{{ alloy_env_file }}"
+    content: |
+      CUSTOM_ARGS="{{ alloy_custom_args }}"
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+
+- name: Ensure systemd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/{{ alloy_service }}.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure Alloy resource limits
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/{{ alloy_service }}.d/{{ _alloy_dropin_file }}
+    owner: root
+    group: root
+    mode: "{{ _alloy_dropin_mode }}"
+    content: |
+      [Service]
+      CPUQuota={{ alloy_cpu_quota }}
+      MemoryHigh={{ alloy_memory_high }}
+      MemoryMax={{ _alloy_dropin_memory_max }}
+
+# Requirement: restart Alloy on every run, even when the config body is
+# byte-identical, so the service picks up changes made on the config server.
+# This also applies the drop-in and any new group membership.
+- name: Restart Alloy after applying configuration
+  ansible.builtin.systemd:
+    name: "{{ alloy_service }}"
+    state: restarted
+    daemon_reload: true
+  register: _alloy_restart
+  ignore_errors: "{{ _alloy_restart_ignore_errors | default(false) }}"
+  when:
+    - not ansible_check_mode
+    - alloy_service_state != 'stopped'
+
+- name: Warn if the Alloy service failed to restart
+  ansible.builtin.debug:
+    msg:
+      - "WARNING: Alloy service failed to restart on {{ inventory_hostname }}"
+      - "Most likely cause: config server returned an error - server hostname not registered."
+      - "Run on the target host: sudo cat {{ alloy_config_dir }}/config.alloy"
+      - "Then register the hostname at https://your-config-service.example.com"
+      - "After registering: sudo systemctl reset-failed {{ alloy_service }} && sudo systemctl start {{ alloy_service }}"
+  when:
+    - _alloy_restart_ignore_errors | default(false) | bool
+    - _alloy_restart.failed | default(false)

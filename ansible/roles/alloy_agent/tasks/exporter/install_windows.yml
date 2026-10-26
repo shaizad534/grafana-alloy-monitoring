@@ -1,0 +1,160 @@
+---
+# Shared Windows exporter installation. Included by the role (tasks/main.yml).
+# The caller must provide the resolved _alloy_exporter_* variables.
+- name: Set exporter paths (Windows)
+  ansible.builtin.set_fact:
+    _alloy_exporter_install_dir: "{{ _alloy_exporter_base_dir }}\\{{ _alloy_exporter_name }}"
+    _alloy_exporter_artifact_path: "{{ _alloy_exporter_base_dir }}\\{{ _alloy_exporter_name }}\\{{ _alloy_exporter_artifact_name }}"
+    _alloy_exporter_config_path: "{{ _alloy_exporter_base_dir }}\\{{ _alloy_exporter_name }}\\{{ _alloy_exporter_config_file_name }}"
+
+- name: Show exporter installation input (Windows)
+  ansible.builtin.debug:
+    msg:
+      - "Exporter name    : {{ _alloy_exporter_name }}"
+      - "Exporter version : {{ _alloy_exporter_version }}"
+      - "Repo folder      : {{ _alloy_exporter_repo_folder }}"
+      - "Repo branch      : {{ exporter_repo_branch }}"
+      - "Artifact name    : {{ _alloy_exporter_artifact_name }}"
+      - "Artifact URL     : {{ _alloy_exporter_artifact_url }}"
+      - "Install path     : {{ _alloy_exporter_install_dir }}"
+
+- name: Ensure exporter install directory exists (Windows)
+  ansible.windows.win_file:
+    path: "{{ _alloy_exporter_install_dir }}"
+    state: directory
+
+- name: Read installed exporter version marker (Windows)
+  ansible.windows.win_shell: |
+    $path = '{{ _alloy_exporter_install_dir }}\current.version'
+    if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw } else { '' }
+  register: _alloy_exporter_current_version_w
+  changed_when: false
+  failed_when: false
+
+- name: Decide whether the exporter must be installed (Windows)
+  ansible.builtin.set_fact:
+    _alloy_exporter_needs_install: >-
+      {{
+        (_alloy_exporter_current_version_w.stdout | default('') | trim)
+        != _alloy_exporter_version
+      }}
+
+- name: Download exporter artifact (Windows)
+  ansible.windows.win_get_url:
+    url: "{{ _alloy_exporter_artifact_url }}"
+    dest: "{{ _alloy_exporter_artifact_path }}"
+    headers:
+      Authorization: "Bearer {{ repo_token }}"
+    validate_certs: "{{ validate_certs }}"
+    url_timeout: "{{ alloy_download_timeout }}"
+    force: true
+  register: _alloy_exporter_download_w
+  retries: 3
+  delay: 3
+  until: _alloy_exporter_download_w is succeeded
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_needs_install | bool
+
+- name: Verify exporter artifact was downloaded (Windows)
+  ansible.windows.win_stat:
+    path: "{{ _alloy_exporter_artifact_path }}"
+  register: _alloy_exporter_artifact_stat_w
+  when: _alloy_exporter_needs_install | bool
+
+- name: Fail if exporter artifact download failed (Windows)
+  ansible.builtin.fail:
+    msg: "Exporter artifact download failed. File not found: {{ _alloy_exporter_artifact_path }}"
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_needs_install | bool
+    - not (_alloy_exporter_artifact_stat_w.stat.exists | default(false))
+
+- name: Extract exporter artifact (Windows)
+  ansible.windows.win_shell: |
+    Expand-Archive -LiteralPath '{{ _alloy_exporter_artifact_path }}' -DestinationPath '{{ _alloy_exporter_install_dir }}' -Force
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_needs_install | bool
+
+- name: Find exporter JAR file (Windows)
+  ansible.windows.win_shell: |
+    $jar = Get-ChildItem -LiteralPath '{{ _alloy_exporter_install_dir }}' -Recurse -Filter '*.jar' -File -ErrorAction SilentlyContinue |
+           Select-Object -First 1
+    if ($jar) { $jar.FullName } else { '' }
+  register: _alloy_exporter_jar_find_w
+  changed_when: false
+  failed_when: false
+
+- name: List exporter files when JAR is missing (Windows)
+  ansible.windows.win_shell: |
+    Get-ChildItem -LiteralPath '{{ _alloy_exporter_install_dir }}' -Recurse -File -ErrorAction SilentlyContinue |
+      Select-Object -ExpandProperty FullName
+  register: _alloy_exporter_file_list_w
+  changed_when: false
+  failed_when: false
+  when: (_alloy_exporter_jar_find_w.stdout | trim | length) == 0
+
+- name: Show exporter files when JAR is missing (Windows)
+  ansible.builtin.debug:
+    var: _alloy_exporter_file_list_w.stdout_lines
+  when:
+    - not ansible_check_mode
+    - (_alloy_exporter_jar_find_w.stdout | trim | length) == 0
+
+- name: Fail if no exporter JAR found (Windows)
+  ansible.builtin.fail:
+    msg: "No JAR found under {{ _alloy_exporter_install_dir }}"
+  when:
+    - not ansible_check_mode
+    - (_alloy_exporter_jar_find_w.stdout | trim | length) == 0
+
+- name: Set exporter JAR path (Windows)
+  ansible.builtin.set_fact:
+    _alloy_exporter_jar_path: "{{ _alloy_exporter_jar_find_w.stdout | trim }}"
+  when: (_alloy_exporter_jar_find_w.stdout | trim | length) > 0
+
+- name: Create default JMX exporter config (Windows)
+  ansible.windows.win_copy:
+    dest: "{{ _alloy_exporter_config_path }}"
+    content: "{{ exporter_config_default_content }}"
+    force: "{{ exporter_overwrite_config | bool }}"
+  when:
+    - _alloy_exporter_name == 'jmx-exporter'
+    - not ansible_check_mode
+    - (_alloy_exporter_needs_install | bool) or (exporter_overwrite_config | bool)
+
+- name: Write exporter current.version marker (Windows)
+  ansible.windows.win_copy:
+    dest: "{{ _alloy_exporter_install_dir }}\\current.version"
+    content: "{{ _alloy_exporter_version }}"
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_needs_install | bool
+
+- name: Exporter installation completed (Windows)
+  ansible.builtin.debug:
+    msg:
+      - "========================================"
+      - "End Exporter Installation"
+      - "Exporter      : {{ _alloy_exporter_name }}"
+      - "Version       : {{ _alloy_exporter_version }}"
+      - "JAR path      : {{ _alloy_exporter_jar_path | default('not installed') }}"
+      - "Config path   : {{ _alloy_exporter_config_path }}"
+      - "Version file  : {{ _alloy_exporter_install_dir }}\\current.version"
+      - "========================================"
+
+- name: Remove downloaded exporter artifact (Windows)
+  ansible.windows.win_file:
+    path: "{{ _alloy_exporter_artifact_path }}"
+    state: absent
+  when:
+    - exporter_cleanup_artifact | bool
+    - not ansible_check_mode
+
+- name: Debug check mode skip (exporter, Windows)
+  ansible.builtin.debug:
+    msg: "check mode: exporter download/extract skipped"
+  when: ansible_check_mode

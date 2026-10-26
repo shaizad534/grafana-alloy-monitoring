@@ -1,0 +1,181 @@
+---
+# Shared Linux exporter installation. Included by the role (tasks/main.yml)
+# and by the on-prem play (tasks/deploy_alloy_onprem.yml). Both callers must
+# provide the resolved _alloy_exporter_* variables from their preflight.
+- name: Set exporter paths (Linux)
+  ansible.builtin.set_fact:
+    _alloy_exporter_install_dir: "{{ _alloy_exporter_base_dir }}/{{ _alloy_exporter_name }}"
+    _alloy_exporter_artifact_path: "{{ _alloy_exporter_base_dir }}/{{ _alloy_exporter_name }}/{{ _alloy_exporter_artifact_name }}"
+    _alloy_exporter_config_path: "{{ _alloy_exporter_base_dir }}/{{ _alloy_exporter_name }}/{{ _alloy_exporter_config_file_name }}"
+
+- name: Show exporter installation input (Linux)
+  ansible.builtin.debug:
+    msg:
+      - "Exporter name    : {{ _alloy_exporter_name }}"
+      - "Exporter version : {{ _alloy_exporter_version }}"
+      - "Repo folder      : {{ _alloy_exporter_repo_folder }}"
+      - "Repo branch      : {{ exporter_repo_branch }}"
+      - "Artifact name    : {{ _alloy_exporter_artifact_name }}"
+      - "Artifact URL     : {{ _alloy_exporter_artifact_url }}"
+      - "Install path     : {{ _alloy_exporter_install_dir }}"
+
+- name: Ensure exporter install directory exists (Linux)
+  ansible.builtin.file:
+    path: "{{ _alloy_exporter_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Read installed exporter version marker (Linux)
+  ansible.builtin.slurp:
+    src: "{{ _alloy_exporter_install_dir }}/current.version"
+  register: _alloy_exporter_current_version
+  failed_when: false
+
+- name: Decide whether the exporter must be installed (Linux)
+  ansible.builtin.set_fact:
+    _alloy_exporter_needs_install: >-
+      {{
+        (_alloy_exporter_current_version.content | default('') | b64decode | trim)
+        != _alloy_exporter_version
+      }}
+
+- name: Download exporter artifact (Linux)
+  ansible.builtin.get_url:
+    url: "{{ _alloy_exporter_artifact_url }}"
+    dest: "{{ _alloy_exporter_artifact_path }}"
+    headers:
+      Authorization: "Bearer {{ repo_token }}"
+    owner: root
+    group: root
+    mode: "0644"
+    force: true
+    validate_certs: "{{ validate_certs }}"
+    timeout: "{{ alloy_download_timeout }}"
+  register: _alloy_exporter_download
+  retries: 3
+  delay: 3
+  until: _alloy_exporter_download is succeeded
+  no_log: true
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_needs_install | bool
+
+- name: Verify exporter artifact was downloaded (Linux)
+  ansible.builtin.stat:
+    path: "{{ _alloy_exporter_artifact_path }}"
+  register: _alloy_exporter_artifact_stat
+  when: _alloy_exporter_needs_install | bool
+
+- name: Fail if exporter artifact download failed (Linux)
+  ansible.builtin.fail:
+    msg: "Exporter artifact download failed. File not found: {{ _alloy_exporter_artifact_path }}"
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_needs_install | bool
+    - not (_alloy_exporter_artifact_stat.stat.exists | default(false))
+
+- name: Ensure unzip is available for exporter extraction (Linux)
+  ansible.builtin.package:
+    name: unzip
+    state: present
+  when: _alloy_exporter_needs_install | bool
+
+- name: Extract exporter artifact (Linux)
+  ansible.builtin.unarchive:
+    src: "{{ _alloy_exporter_artifact_path }}"
+    dest: "{{ _alloy_exporter_install_dir }}"
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_needs_install | bool
+
+- name: Find exporter JAR file (Linux)
+  ansible.builtin.find:
+    paths: "{{ _alloy_exporter_install_dir }}"
+    patterns: "*.jar"
+    recurse: true
+    file_type: file
+  register: _alloy_exporter_jar_find
+
+- name: List exporter files when JAR is missing (Linux)
+  ansible.builtin.command:
+    cmd: "find {{ _alloy_exporter_install_dir }} -type f"
+  register: _alloy_exporter_file_list
+  changed_when: false
+  failed_when: false
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_jar_find.matched | int == 0
+
+- name: Show exporter files when JAR is missing (Linux)
+  ansible.builtin.debug:
+    var: _alloy_exporter_file_list.stdout_lines
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_jar_find.matched | int == 0
+
+- name: Fail if no exporter JAR found (Linux)
+  ansible.builtin.fail:
+    msg: "No JAR found under {{ _alloy_exporter_install_dir }}"
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_jar_find.matched | int == 0
+
+- name: Set exporter JAR path (Linux)
+  ansible.builtin.set_fact:
+    _alloy_exporter_jar_path: "{{ _alloy_exporter_jar_find.files[0].path }}"
+  when: _alloy_exporter_jar_find.matched | int > 0
+
+- name: Create default JMX exporter config (Linux)
+  ansible.builtin.copy:
+    dest: "{{ _alloy_exporter_config_path }}"
+    content: "{{ exporter_config_default_content }}"
+    owner: root
+    group: root
+    mode: "0644"
+    force: "{{ exporter_overwrite_config | bool }}"
+  when:
+    - _alloy_exporter_name == 'jmx-exporter'
+    - not ansible_check_mode
+    - (_alloy_exporter_needs_install | bool) or (exporter_overwrite_config | bool)
+
+- name: Write exporter current.version marker (Linux)
+  ansible.builtin.copy:
+    dest: "{{ _alloy_exporter_install_dir }}/current.version"
+    content: "{{ _alloy_exporter_version }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - not ansible_check_mode
+    - _alloy_exporter_needs_install | bool
+
+- name: Exporter installation completed (Linux)
+  ansible.builtin.debug:
+    msg:
+      - "========================================"
+      - "End Exporter Installation"
+      - "Exporter      : {{ _alloy_exporter_name }}"
+      - "Version       : {{ _alloy_exporter_version }}"
+      - "JAR path      : {{ _alloy_exporter_jar_path | default('not installed') }}"
+      - "Config path   : {{ _alloy_exporter_config_path }}"
+      - "Version file  : {{ _alloy_exporter_install_dir }}/current.version"
+      - "========================================"
+
+- name: Remove downloaded exporter artifact (Linux)
+  ansible.builtin.file:
+    path: "{{ _alloy_exporter_artifact_path }}"
+    state: absent
+  when:
+    - exporter_cleanup_artifact | bool
+    - not ansible_check_mode
+
+- name: Debug check mode skip (exporter, Linux)
+  ansible.builtin.debug:
+    msg: "check mode: exporter download/extract skipped"
+  when: ansible_check_mode

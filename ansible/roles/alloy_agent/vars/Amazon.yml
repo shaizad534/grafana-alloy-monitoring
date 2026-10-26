@@ -2,7 +2,7 @@
 _ansible_platform_defaults:
   pkg_ext: rpm
   pkg_install_cmd: "yum install -y"
-  service_name: alloy
-  config_path: /etc/alloy/config.alloy
-  binary_path: /usr/bin/alloy
-  install_dir: /etc/alloy
+  service_name: "{{ alloy_service }}"
+  config_path: "{{ alloy_config_dir }}/config.alloy"
+  binary_path: "{{ alloy_binary_path }}"
+  install_dir: "{{ alloy_config_dir }}"

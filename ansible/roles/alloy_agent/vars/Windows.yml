@@ -1,8 +1,13 @@
 ---
+# Windows paths are defined once as playbook-style variables in
+# defaults/main.yml (work_dir, installer_path, alloy_dir, alloy_uninstaller,
+# alloy_config_path, alloy_windows_service). This file keeps the platform map
+# used by the installed-version query, with values derived from those variables
+# so there is no second copy of the paths.
 _ansible_platform_defaults:
-  service_name: Alloy
-  config_path: 'C:\GrafanaLabs\Alloy\config.alloy'
-  binary_path: 'C:\GrafanaLabs\Alloy\alloy-windows-amd64.exe'
-  install_dir: 'C:\GrafanaLabs\Alloy'
-  installer_asset: alloy-installer-windows-amd64.exe.zip
-  temp_dir: 'C:\Windows\Temp'
+  service_name: '{{ alloy_windows_service }}'
+  config_path: '{{ alloy_config_path }}'
+  binary_path: '{{ alloy_dir }}\alloy.exe'
+  install_dir: '{{ alloy_dir }}'
+  installer_asset: '{{ alloy_windows_installer_name }}'
+  temp_dir: '{{ work_dir }}'

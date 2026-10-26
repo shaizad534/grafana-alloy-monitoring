@@ -1,0 +1,56 @@
+---
+# Shared config validation. Included by the role (tasks/main.yml) and by the
+# on-prem play (tasks/deploy_alloy_onprem.yml). Callers set:
+#   _alloy_config_validate_path      file to validate
+#   _alloy_config_validate_fail_msg  message shown when the response is empty
+#                                    or contains a config-service error
+# A syntactically valid config is additionally checked with `alloy validate`
+# (alloy_binary_path), so a broken config fails the run instead of reaching
+# the service.
+- name: Read the Alloy configuration for validation
+  ansible.builtin.slurp:
+    src: "{{ _alloy_config_validate_path }}"
+  register: _alloy_config_validate
+  failed_when: false
+  no_log: true
+
+- name: Validate the Alloy configuration
+  ansible.builtin.assert:
+    that:
+      - _alloy_config_validate.content is defined
+      - (_alloy_config_validate.content | default('') | b64decode | trim | length) > 0
+      - not (_alloy_config_validate.content | default('') | b64decode).lstrip().startswith('{"error"')
+    fail_msg: "{{ _alloy_config_validate_fail_msg }}"
+    quiet: true
+
+# `alloy validate` parses the config and checks every component and argument.
+# The binary is installed before this file runs in both flows; if it is missing
+# (for example a configure-only run on an unprovisioned host) the check is
+# skipped rather than failing on a missing binary.
+- name: Check whether the Alloy binary is available for validation
+  ansible.builtin.stat:
+    path: "{{ alloy_binary_path }}"
+  register: _alloy_validate_binary
+
+- name: Validate the configuration with alloy validate
+  ansible.builtin.command:
+    argv:
+      - "{{ alloy_binary_path }}"
+      - validate
+      - "{{ _alloy_config_validate_path }}"
+  register: _alloy_validate_result
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: _alloy_validate_binary.stat.exists
+
+- name: Fail when alloy validate rejects the configuration
+  ansible.builtin.fail:
+    msg: >-
+      alloy validate rejected {{ _alloy_config_validate_path }} on
+      {{ inventory_hostname }} (exit code
+      {{ _alloy_validate_result.rc | default('n/a') }}).
+      Validation output: {{ (_alloy_validate_result.stderr | default('') | trim) or (_alloy_validate_result.stdout | default('') | trim) or 'none' }}
+  when:
+    - _alloy_validate_binary.stat.exists
+    - _alloy_validate_result.rc | default(0) != 0

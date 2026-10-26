@@ -1,0 +1,230 @@
+---
+# Variable contract for the role. `ansible-doc alloy_agent` renders this file,
+# and Ansible validates the types/choices at runtime, so a typo in a value is
+# reported instead of silently ignored.
+argument_specs:
+  main:
+    short_description: Install and configure Grafana Alloy on Linux and Windows
+    description:
+      - Installs Grafana Alloy from a generic URL, a Bitbucket/Artifactory
+        mirror, or a local directory.
+      - Downloads config.alloy from the config service on every run and
+        restarts the service on every run.
+      - Optionally installs a JMX (or other) exporter next to Alloy.
+    author: Platform Engineering
+    options:
+      alloy_version:
+        type: str
+        default: "1.19.2"
+        description: Alloy version to install. Must match the package filename.
+      alloy_download_base_url:
+        type: str
+        default: "https://github.com/grafana/alloy/releases/download"
+        description: Base URL for the generic versioned package layout.
+      alloy_download_version_prefix:
+        type: str
+        default: "v"
+        description: Prefix before the version in the generic layout (GitHub uses "v").
+      alloy_package_local_dir:
+        type: str
+        default: ""
+        description: Local directory holding the package. Empty means download.
+      alloy_package_checksum:
+        type: str
+        default: ""
+        description: Optional SHA256 of the Linux package. Empty skips the check.
+      alloy_disable_gpg_check:
+        type: bool
+        default: false
+        description: Disable RPM GPG verification. Keep false unless the internal RPM is unsigned.
+      artifact_base_url:
+        type: str
+        default: ""
+        description: Bitbucket/Artifactory folder for Linux packages. Empty uses alloy_download_base_url.
+      artifact_branch:
+        type: str
+        default: "master"
+        description: Branch used for Bitbucket raw URLs (?at=...).
+      bitbucket_token:
+        type: str
+        default: ""
+        description: Bearer token for artifact_base_url. Required when artifact_base_url is set.
+      config_base_url_linux:
+        type: str
+        description: Config-service endpoint for Linux targets.
+      config_base_url_windows:
+        type: str
+        description: Config-service endpoint for Windows targets.
+      alloy_static_key:
+        type: str
+        default: ""
+        description: Token sent to the config service. Required.
+      validate_certs:
+        type: bool
+        default: true
+        description: Verify TLS certificates for artifact and config downloads.
+      alloy_download_timeout:
+        type: int
+        default: 120
+        description: Timeout in seconds for artifact and config downloads.
+      alloy_cleanup_download:
+        type: bool
+        default: true
+        description: Remove downloaded packages from /tmp after installation.
+      force_install:
+        type: bool
+        default: false
+        description: Reinstall even when alloy_version is already installed.
+      install_exporter:
+        type: bool
+        default: false
+        description: Install an exporter artifact next to Alloy.
+      exporter_name:
+        type: str
+        default: ""
+        description: Exporter name, for example jmx-exporter.
+      exporter_version:
+        type: str
+        default: ""
+        description: Exporter version.
+      repo_token:
+        type: str
+        description: Token for the exporter repository. Defaults to bitbucket_token.
+      exporter_base_dir:
+        type: str
+        default: ""
+        description: Exporter base directory. Empty uses the per-OS default.
+      exporter_repo_root_url:
+        type: str
+        description: Root URL of the exporter repository.
+      exporter_repo_branch:
+        type: str
+        default: "master"
+        description: Branch used for exporter raw URLs.
+      exporter_cleanup_artifact:
+        type: bool
+        default: true
+        description: Remove the exporter zip after extraction.
+      exporter_overwrite_config:
+        type: bool
+        default: false
+        description: Overwrite an existing exporter config file with the default content.
+      alloy_service:
+        type: str
+        default: "alloy.service"
+        description: systemd unit name for Linux.
+      alloy_service_state:
+        type: str
+        default: started
+        choices: [started, stopped, restarted]
+        description: Desired service state.
+      alloy_service_enabled:
+        type: bool
+        default: true
+        description: Enable the service at boot (Linux).
+      alloy_user:
+        type: str
+        default: alloy
+        description: Owner of the Alloy config and data directories.
+      alloy_group:
+        type: str
+        default: alloy
+        description: Group of the Alloy config and data directories.
+      alloy_config_dir:
+        type: str
+        default: /etc/alloy
+        description: Directory for config.alloy.
+      alloy_data_dir:
+        type: str
+        default: /var/lib/alloy
+        description: Directory for Alloy data.
+      alloy_http_port:
+        type: int
+        default: 12345
+        description: Port used for the readiness and metrics checks.
+      alloy_verify_retries:
+        type: int
+        default: 15
+        description: Retries for the readiness check.
+      alloy_verify_delay:
+        type: int
+        default: 4
+        description: Seconds between readiness retries.
+      alloy_verify_timeout:
+        type: int
+        default: 10
+        description: Timeout in seconds for a single readiness request.
+      alloy_cpu_quota:
+        type: str
+        default: "30%"
+        description: systemd CPUQuota value.
+      alloy_memory_high:
+        type: str
+        default: "500M"
+        description: systemd MemoryHigh value.
+      alloy_memory_max:
+        type: str
+        default: "700M"
+        description: systemd MemoryMax value (role and on-prem default).
+      alloy_env_file:
+        type: str
+        default: /etc/default/alloy
+        description: Environment file created when missing; never overwritten.
+      alloy_custom_args:
+        type: str
+        default: "--server.http.listen-addr=127.0.0.1:12345 --disable-reporting=true"
+        description: CUSTOM_ARGS written to alloy_env_file when it is created.
+      alloy_binary_path:
+        type: str
+        default: /usr/bin/alloy
+        description: Alloy binary used by `alloy validate` before config.alloy is replaced.
+      alloy_log_files:
+        type: list
+        elements: str
+        description: Log files Alloy is granted read access to.
+      alloy_extra_groups:
+        type: list
+        elements: str
+        description: Supplementary groups added to the Alloy user when they exist.
+      alloy_windows_service:
+        type: str
+        default: Alloy
+        description: Windows service name.
+      alloy_windows_installer_name:
+        type: str
+        default: alloy-installer-windows-amd64.exe
+        description: Windows installer filename.
+      alloy_windows_installer_checksum:
+        type: str
+        default: ""
+        description: SHA256 of the Windows installer. Required for remote installs unless alloy_require_windows_installer_checksum is false.
+      alloy_require_windows_installer_checksum:
+        type: bool
+        default: true
+        description: Fail a remote Windows install when alloy_windows_installer_checksum is empty.
+      work_dir:
+        type: str
+        default: 'C:\Temp\Alloy'
+        description: Working directory on Windows targets.
+      alloy_dir:
+        type: str
+        default: 'C:\Program Files\GrafanaLabs\Alloy'
+        description: Alloy installation directory on Windows.
+      deploy_onprem:
+        type: bool
+        default: false
+        description: Enable the imported on-prem play. Only used by deploy_alloy.yml.
+      target_group_onprem:
+        type: str
+        default: linux_servers
+        description: Inventory group targeted by the on-prem play.
+      alloy_onprem_memory_max:
+        type: str
+        default: "700M"
+        description: MemoryMax written by the on-prem play. Defaults to alloy_memory_max; override only for a different on-prem cap.
+      alloy_pkg_dir:
+        type: str
+        description: Local directory holding the on-prem package.
+      alloy_support_files_dir:
+        type: str
+        description: Directory holding config_alloy.sh for the on-prem play.

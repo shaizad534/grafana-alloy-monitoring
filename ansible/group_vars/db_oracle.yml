@@ -1,4 +1,0 @@
----
-alloy_exporter_oracledb:
-  enabled: true
-  connection_string: ""
