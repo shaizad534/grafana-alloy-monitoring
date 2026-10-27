@@ -143,15 +143,22 @@
         - ansible_os_family in ['RedHat', 'Amazon']
         - _alloy_pkg_query_rh is defined
 
+    # set_fact templates every value in one pass, so alloy_pkg_path and
+    # _alloy_download_url cannot read alloy_pkg_name set by the same task: it
+    # does not exist yet on the first (install) run. The package filename is
+    # therefore built once in task-level vars, which are resolved before the
+    # module arguments.
     - name: Set package name, path, and download source
+      vars:
+        _alloy_pkg_name_resolved: "alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform._ansible_platform_defaults.pkg_ext }}"
       ansible.builtin.set_fact:
-        alloy_pkg_name: "alloy-{{ alloy_version }}-1.{{ _alloy_arch }}.{{ _platform._ansible_platform_defaults.pkg_ext }}"
-        alloy_pkg_path: "/tmp/{{ alloy_pkg_name }}"
+        alloy_pkg_name: "{{ _alloy_pkg_name_resolved }}"
+        alloy_pkg_path: "/tmp/{{ _alloy_pkg_name_resolved }}"
         _alloy_download_url: >-
           {{
-            (artifact_base_url ~ '/' ~ alloy_version ~ '/' ~ alloy_pkg_name ~ '?at=' ~ (artifact_branch | urlencode))
+            (artifact_base_url ~ '/' ~ alloy_version ~ '/' ~ _alloy_pkg_name_resolved ~ '?at=' ~ (artifact_branch | urlencode))
             if (artifact_base_url | length > 0)
-            else (alloy_download_base_url ~ '/' ~ alloy_download_version_prefix ~ alloy_version ~ '/' ~ alloy_pkg_name)
+            else (alloy_download_base_url ~ '/' ~ alloy_download_version_prefix ~ alloy_version ~ '/' ~ _alloy_pkg_name_resolved)
           }}
       when:
         - ansible_os_family in ['Debian', 'RedHat', 'Amazon']
